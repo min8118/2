@@ -1,0 +1,2315 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>인생케어평생학습관 출석부 (구민 확인 미완료 표시)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- Supabase (무료 Free Plan으로 충분, 구글이 아닌 서비스입니다) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        /* 구글 폰트 대신 jsDelivr(비-구글 CDN)에서 제공하는 Pretendard 폰트를 사용합니다 */
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+        body {
+            font-family: 'Pretendard', 'Noto Sans KR', 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+        .check-box {
+            width: 26px;
+            height: 26px;
+            accent-color: #059669;
+            cursor: pointer;
+        }
+        .day-chip input { display: none; }
+        .day-chip span {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 32px; height: 32px; border-radius: 9999px;
+            font-size: 12px; font-weight: 700; cursor: pointer;
+            border: 1px solid #e2e8f0; color: #64748b; background: #f8fafc;
+            transition: all .15s;
+        }
+        .day-chip input:checked + span {
+            background: #059669; border-color: #059669; color: white;
+        }
+        /* 모바일(스마트폰)에서 입력창 터치 시 자동 확대(줌) 방지 */
+        @media (max-width: 640px) {
+            input, select, textarea, button { font-size: 16px !important; }
+        }
+    </style>
+</head>
+<body class="min-h-screen text-slate-800">
+
+    <div id="loading-overlay" class="fixed inset-0 bg-white/90 backdrop-blur-xs z-[100] flex flex-col items-center justify-center gap-3">
+        <div class="w-10 h-10 border-4 border-emerald-200 border-t-emerald-600 rounded-full animate-spin"></div>
+        <p class="text-sm font-semibold text-slate-500">서버에서 데이터를 불러오는 중...</p>
+    </div>
+
+    <header class="bg-emerald-600 text-white shadow-md">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                <span>📅</span> 인생케어평생학습관 출석부
+            </h1>
+            <nav class="flex items-center gap-3">
+                <span id="sync-badge" class="text-xs font-semibold text-emerald-200">☁️ 동기화됨</span>
+                <button id="tab-student-btn" onclick="switchTab('student')" class="px-4 py-2 rounded-lg font-medium bg-white text-emerald-600 shadow-sm transition-all">
+                    학습자 페이지
+                </button>
+                <button id="tab-admin-btn" onclick="switchTab('admin')" class="px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 transition-all text-emerald-100">
+                    관리자 페이지 🔒
+                </button>
+                <button id="tab-log-btn" onclick="switchTab('log')" class="hidden px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 transition-all text-emerald-100">
+                    활동 로그 📋
+                </button>
+                <button id="admin-logout-btn" onclick="adminLogout()" class="hidden px-3 py-2 rounded-lg font-medium bg-emerald-800 hover:bg-emerald-900 transition-all text-white text-sm">
+                    로그아웃
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <main id="main-container" class="max-w-6xl mx-auto px-4 py-8 transition-all">
+
+        <section id="page-student" class="space-y-6">
+            <div class="bg-white p-6 rounded-2xl shadow-xs border border-slate-100">
+                <label for="student-course-select" class="block text-sm font-semibold text-slate-600 mb-2">수강 중인 강좌를 선택하세요</label>
+                <select id="student-course-select" onchange="renderStudentList()" class="w-full md:w-80 p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium">
+                </select>
+            </div>
+
+            <div id="current-session-banner" class="bg-emerald-50 border border-emerald-100 p-4 rounded-xl flex items-center justify-between flex-wrap gap-3">
+                <div class="flex items-center gap-3">
+                    <span class="text-2xl">📢</span>
+                    <div>
+                        <p class="font-bold text-emerald-900" id="banner-text">강좌를 선택하면 오늘 날짜에 맞는 출석 회차가 표시됩니다.</p>
+                        <p class="text-xs text-emerald-600 mt-0.5">이름 옆 체크박스를 누르면 오늘 날짜 회차로 즉시 출석 처리됩니다.</p>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <p class="text-xs text-emerald-400 font-semibold">오늘 출석 현황</p>
+                    <p class="text-lg font-extrabold text-emerald-700" id="banner-progress">0 / 0</p>
+                </div>
+            </div>
+
+            <div class="space-y-3">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <h3 class="text-lg font-bold text-slate-700 flex items-center gap-2">
+                        👥 학습자 명단 <span class="text-sm font-normal text-slate-400">(체크하면 바로 출석 처리됩니다)</span>
+                    </h3>
+                    <input type="text" id="student-search" oninput="renderStudentList()" placeholder="🔍 이름으로 내 출석 찾기" class="w-full sm:w-64 p-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <div id="student-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                </div>
+            </div>
+        </section>
+
+        <section id="page-admin-locked" class="hidden">
+            <div class="max-w-sm mx-auto bg-white p-8 rounded-2xl shadow-xs border border-slate-100 text-center space-y-4 mt-10">
+                <div class="text-4xl">🔒</div>
+                <h3 class="text-lg font-bold text-slate-800">관리자 비밀번호 입력</h3>
+                <p class="text-xs text-slate-400">관리자 페이지는 비밀번호로 보호되어 있습니다.</p>
+                <input type="password" id="admin-password-input" placeholder="비밀번호 입력" class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-center focus:outline-none focus:ring-2 focus:ring-emerald-500" onkeydown="if(event.key==='Enter') tryAdminLogin()">
+                <button onclick="tryAdminLogin()" class="w-full py-2.5 bg-emerald-600 text-white font-bold rounded-lg text-sm hover:bg-emerald-700 transition-all">확인</button>
+                <p class="text-[11px] text-slate-300" id="admin-first-time-hint"></p>
+            </div>
+        </section>
+
+        <section id="page-admin" class="hidden space-y-8">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div id="panel-course-create" class="bg-white p-6 rounded-2xl shadow-xs border border-slate-100 space-y-4">
+                    <h3 class="text-md font-bold text-slate-800 border-b pb-2 flex items-center gap-1.5">📘 강좌 개설</h3>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">새 강좌명</label>
+                        <input type="text" id="new-course-name" placeholder="예: 파이썬 기초반" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1">총 강의 회차</label>
+                            <input type="number" id="new-course-total" value="10" min="1" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1">수료 기준 회차</label>
+                            <input type="number" id="new-course-cutoff" value="6" min="1" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">개강일 (1회차 날짜)</label>
+                        <input type="date" id="new-course-start" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">수업 요일 (복수 선택)</label>
+                        <div id="new-course-days" class="flex gap-1.5 flex-wrap"></div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">휴강일 (선택, 여러 개 등록 가능)</label>
+                        <div class="flex gap-2">
+                            <input type="date" id="new-course-holiday-input" class="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                            <button type="button" onclick="addHoliday('new')" class="px-3 py-2 bg-slate-700 text-white text-xs font-bold rounded-lg hover:bg-slate-800">+ 추가</button>
+                        </div>
+                        <div id="new-course-holiday-list" class="mt-2 flex flex-wrap"></div>
+                    </div>
+                    <button onclick="addCourse()" class="w-full py-2.5 bg-emerald-600 text-white font-bold rounded-lg text-sm hover:bg-emerald-700 transition-all">강좌 등록하기</button>
+                </div>
+
+                <div id="panel-course-edit" class="bg-white p-6 rounded-2xl shadow-xs border border-slate-100 space-y-4">
+                    <h3 class="text-md font-bold text-slate-800 border-b pb-2 flex items-center gap-1.5">⚙️ 강좌 일정 수정</h3>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">수정할 강좌 선택</label>
+                        <select id="admin-course-select" onchange="syncAdminCourseSettings()" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1">총 강의 회차</label>
+                            <input type="number" id="edit-course-total" min="1" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1">수료 기준 회차</label>
+                            <input type="number" id="edit-course-cutoff" min="1" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">개강일 (1회차 날짜)</label>
+                        <input type="date" id="edit-course-start" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">수업 요일 (복수 선택)</label>
+                        <div id="edit-course-days" class="flex gap-1.5 flex-wrap"></div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">휴강일 (선택, 여러 개 등록/삭제 가능)</label>
+                        <div class="flex gap-2">
+                            <input type="date" id="edit-course-holiday-input" class="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                            <button type="button" onclick="addHoliday('edit')" class="px-3 py-2 bg-slate-700 text-white text-xs font-bold rounded-lg hover:bg-slate-800">+ 추가</button>
+                        </div>
+                        <div id="edit-course-holiday-list" class="mt-2 flex flex-wrap"></div>
+                    </div>
+                    <p class="text-[11px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg p-2">※ 총 회차를 변경하면 이미 등록된 수강생의 출석 기록 칸 수도 함께 조정됩니다.</p>
+                    <button onclick="saveCourseSettings()" class="w-full py-2.5 bg-slate-800 text-white font-bold rounded-lg text-sm hover:bg-slate-900 transition-all">일정 저장하기</button>
+                    <button onclick="deleteCourse()" class="w-full py-2 bg-white text-rose-500 font-bold rounded-lg text-xs border border-rose-200 hover:bg-rose-50 transition-all">🗑️ 이 강좌 삭제하기</button>
+                </div>
+
+                <div id="panel-student-register" class="bg-white p-6 rounded-2xl shadow-xs border border-slate-100 space-y-4">
+                    <h3 class="text-md font-bold text-slate-800 border-b pb-2 flex items-center gap-1.5">👤 수강생 등록 (개별/엑셀)</h3>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">대상 강좌 선택</label>
+                        <select id="admin-student-course-select" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                        </select>
+                    </div>
+
+                    <div class="border-t pt-2 space-y-2">
+                        <p class="text-xs font-bold text-emerald-600">방법 [A] 한 명씩 직접 입력</p>
+                        <input type="text" id="new-student-name" placeholder="수강생 이름" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-md text-xs">
+                        <div class="grid grid-cols-2 gap-2">
+                            <select id="new-student-gender" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-md text-xs">
+                                <option value="">성별 선택</option>
+                                <option value="남">남</option>
+                                <option value="여">여</option>
+                            </select>
+                            <input type="number" id="new-student-birthyear" placeholder="출생년도 (예: 1958)" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-md text-xs">
+                        </div>
+                        <input type="tel" id="new-student-phone" placeholder="전화번호 (예: 010-1234-5678)" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-md text-xs">
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" id="new-student-citizen" class="w-3.5 h-3.5 accent-emerald-600">
+                            <label for="new-student-citizen" class="text-xs text-slate-600">구민 확인 완료 여부</label>
+                        </div>
+                        <button onclick="addStudent()" class="w-full py-1.5 bg-slate-700 text-white font-semibold rounded-md text-xs hover:bg-slate-800">개별 등록</button>
+                    </div>
+
+                    <div class="border-t pt-3 space-y-2">
+                        <p class="text-xs font-bold text-emerald-600">방법 [B] 엑셀 파일로 통째로 올리기</p>
+                        <p class="text-[11px] text-slate-400">첫 줄에 '이름','성별','출생년도','전화번호','구민확인' 명칭이 적힌 엑셀 파일(.xlsx)을 선택하세요. (전화번호는 생략 가능)</p>
+                        <button onclick="downloadSampleExcel()" class="w-full py-1.5 bg-white text-emerald-600 font-semibold rounded-md text-xs border border-emerald-200 hover:bg-emerald-50">📄 엑셀 양식 예시 다운로드</button>
+                        <input type="file" id="excel-file-input" accept=".xlsx, .xls" class="w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100">
+                        <button onclick="uploadExcel()" class="w-full py-1.5 bg-emerald-600 text-white font-semibold rounded-md text-xs hover:bg-emerald-700">엑셀 명단 업로드 실행</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="panel-bulk-excel" class="bg-white p-6 rounded-2xl shadow-xs border border-slate-100 space-y-3">
+                <h3 class="text-md font-bold text-slate-800 border-b pb-2 flex items-center gap-1.5">🚀 강좌 개설 + 수강생 등록 한번에 (엑셀 일괄 업로드)</h3>
+                <p class="text-[11px] text-slate-400">
+                    엑셀 첫 줄에 <b>강좌명, 강의시작일, 요일, 학습자명, 구민확인, 성별, 출생연도, 전화번호</b> 열을 넣어주세요 (전화번호는 생략 가능). 같은 강좌명이 여러 줄 있으면 자동으로 한 강좌로 묶여 등록됩니다.
+                    이미 존재하는 강좌명이면 새로 만들지 않고 그 강좌에 학습자만 추가합니다. '요일'은 "월,수" 처럼 쉼표로 여러 개 적을 수 있습니다 (월~일 중 선택).
+                    새로 만들어지는 강좌의 총 회차/수료 기준 회차는 기본값(10회/6회)으로 등록되며, 필요하면 위 [강좌 일정 수정]에서 바꿀 수 있습니다.
+                </p>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <button onclick="downloadFullSampleExcel()" class="flex-1 py-1.5 bg-white text-emerald-600 font-semibold rounded-md text-xs border border-emerald-200 hover:bg-emerald-50">📄 일괄 등록용 엑셀 양식 다운로드</button>
+                    <input type="file" id="full-excel-file-input" accept=".xlsx, .xls" class="flex-1 text-xs text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100">
+                    <button onclick="uploadFullExcel()" class="flex-1 py-1.5 bg-emerald-600 text-white font-semibold rounded-md text-xs hover:bg-emerald-700">일괄 업로드 실행</button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div id="panel-admin-accounts" class="bg-white p-6 rounded-2xl shadow-xs border border-slate-100 space-y-4">
+                    <h3 class="text-md font-bold text-slate-800 border-b pb-2 flex items-center gap-1.5">🔑 관리자 계정 관리 (여러 명 등록 가능)</h3>
+
+                    <div class="space-y-1.5">
+                        <p class="text-xs font-bold text-slate-500">등록된 관리자</p>
+                        <div id="admin-account-list" class="space-y-1 max-h-40 overflow-y-auto pr-1"></div>
+                    </div>
+
+                    <div class="border-t pt-3 space-y-2">
+                        <p class="text-xs font-bold text-emerald-600">비밀번호 변경</p>
+                        <select id="pw-account-select" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm"></select>
+                        <input type="password" id="pw-current" placeholder="현재 비밀번호" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                        <input type="password" id="pw-new" placeholder="새 비밀번호 (4자리 이상)" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                        <button onclick="changeAdminPassword()" class="w-full py-2.5 bg-slate-800 text-white font-bold rounded-lg text-sm hover:bg-slate-900 transition-all">비밀번호 변경</button>
+                    </div>
+
+                    <div class="border-t pt-3 space-y-2">
+                        <p class="text-xs font-bold text-emerald-600" id="admin-add-form-title">관리자 추가</p>
+                        <input type="text" id="new-admin-name" placeholder="관리자 이름/구분 (예: 김선생님)" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-md text-xs">
+                        <input type="password" id="new-admin-password" placeholder="비밀번호 (4자리 이상, 수정 시 비워두면 기존 비밀번호 유지)" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-md text-xs">
+                        <div>
+                            <label class="block text-[11px] font-semibold text-slate-500 mb-1">권한 등급</label>
+                            <select id="new-admin-role" onchange="onAdminRoleFormChange()" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-md text-xs">
+                                <option value="super">슈퍼관리자 (모든 권한)</option>
+                                <option value="admin1">관리자1 (수정자 확인 불가 · 권한 부여 불가)</option>
+                                <option value="admin2">관리자2 (지정 강좌 출석여부 확인만 가능)</option>
+                            </select>
+                        </div>
+                        <div id="new-admin-course-picker" class="hidden border border-slate-200 rounded-md p-2 space-y-1">
+                            <p class="text-[11px] font-semibold text-slate-500">확인 가능한 강좌 선택 (복수 선택 가능)</p>
+                            <div id="new-admin-course-checkboxes" class="max-h-28 overflow-y-auto space-y-1"></div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button id="admin-add-submit-btn" onclick="addAdminAccount()" class="flex-1 py-1.5 bg-slate-700 text-white font-semibold rounded-md text-xs hover:bg-slate-800">관리자 추가</button>
+                            <button id="admin-add-cancel-btn" onclick="cancelAdminEdit()" class="hidden px-3 py-1.5 bg-white text-slate-500 font-semibold rounded-md text-xs border border-slate-200 hover:bg-slate-50">취소</button>
+                        </div>
+                    </div>
+
+                    <p class="text-[11px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg p-2">🔓 모든 관리자 비밀번호를 잊어버렸다면, Supabase 대시보드의 <b>Table Editor → app_state → main 행</b>에서 <code>data</code> 컬럼(JSON) 안의 <code>adminAccounts</code> 값을 직접 수정하면 됩니다.</p>
+                </div>
+
+                <div id="panel-download-roster" class="bg-white p-6 rounded-2xl shadow-xs border border-slate-100 space-y-3">
+                    <h3 class="text-md font-bold text-slate-800 border-b pb-2 flex items-center gap-1.5">📥 명단 다운로드 (미수료자 포함 전체 명단)</h3>
+                    <details id="course-select-details" class="border border-slate-200 rounded-xl overflow-hidden group">
+                        <summary class="cursor-pointer select-none px-3 py-2.5 text-sm font-semibold text-slate-600 bg-slate-50 flex items-center justify-between list-none">
+                            <span id="course-select-summary" class="flex items-center gap-1.5">📂 강좌 선택 <span class="text-emerald-600 font-bold">(0개 선택됨)</span></span>
+                            <span class="text-slate-400 text-xs transition-transform group-open:rotate-180">▾</span>
+                        </summary>
+                        <div class="px-3 pb-3 pt-2 border-t border-slate-100 space-y-2">
+                            <input type="text" id="course-checkbox-search" oninput="filterCourseCheckboxList()" placeholder="🔍 강좌명 검색" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+                            <div class="flex items-center gap-2 pb-1">
+                                <input type="checkbox" id="course-select-all" onchange="toggleAllCourseCheckboxes()" class="w-4 h-4 accent-emerald-600">
+                                <label for="course-select-all" class="text-sm font-semibold text-slate-600">전체 선택 (검색 결과 기준)</label>
+                            </div>
+                            <div id="course-checkbox-list" class="space-y-1 max-h-48 overflow-y-auto pr-1"></div>
+                        </div>
+                    </details>
+                    <button onclick="downloadSelectedCourses()" class="w-full py-2.5 bg-emerald-600 text-white font-bold rounded-lg text-sm hover:bg-emerald-700 transition-all">선택한 강좌 전체 다운로드 (.csv)</button>
+                </div>
+
+                <div id="panel-quarter-close" class="bg-white p-6 rounded-2xl shadow-xs border border-rose-100 space-y-3">
+                    <h3 class="text-md font-bold text-rose-700 border-b border-rose-100 pb-2 flex items-center gap-1.5">🗓️ 분기 마감 (전체 다운로드 후 초기화)</h3>
+                    <p class="text-xs text-slate-500 leading-relaxed">버튼을 누르면 <b>① 전체 강좌·수강생 명단이 자동으로 CSV 다운로드</b>된 뒤, <b>② 확인 절차를 거쳐 모든 강좌와 수강생 데이터가 삭제</b>됩니다. 관리자 계정 정보는 삭제되지 않습니다. 되돌릴 수 없으니 다운로드된 파일을 꼭 안전한 곳에 보관해 주세요.</p>
+                    <button onclick="quarterCloseReset()" class="w-full py-2.5 bg-rose-600 text-white font-bold rounded-lg text-sm hover:bg-rose-700 transition-all">⚠️ 전체 다운로드 후 전체 삭제</button>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-2xl shadow-xs border border-slate-100 space-y-4">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b pb-4">
+                    <h3 class="text-lg font-bold text-slate-800">📊 종합 대시보드 및 명단</h3>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleAdminWidth()" id="wide-toggle-btn" class="px-3 py-2 bg-white text-slate-500 font-bold rounded-xl text-xs border border-slate-200 hover:bg-slate-50 transition-all">
+                            ↔️ 화면 좁게 보기
+                        </button>
+                        <button id="btn-download-course-roster" onclick="downloadCourseRoster()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm shadow-xs flex items-center gap-1.5 transition-all">
+                            📥 현재 강좌 전체 다운로드 (.csv)
+                        </button>
+                        <button id="btn-open-qr" onclick="openQrModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-sm shadow-xs flex items-center gap-1.5 transition-all">
+                            📱 출석 QR코드
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">강좌 검색 후 선택</label>
+                        <input type="text" id="admin-course-search" oninput="filterCourseDropdown()" placeholder="🔍 강좌명 검색" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm mb-1">
+                        <select id="admin-table-filter" onchange="renderAdminTable()" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">학습자 이름 검색</label>
+                        <input type="text" id="admin-student-search" oninput="renderAdminTable()" placeholder="🔍 학습자 이름 검색" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    </div>
+                </div>
+
+                <div id="course-analysis" class="bg-slate-50 border border-slate-100 rounded-xl p-4"></div>
+
+                <p id="edit-tip-text" class="text-[11px] text-emerald-600 bg-emerald-50 border border-emerald-100 rounded-lg p-2">✏️ 표의 <b>회차 배지</b>를 클릭하면 해당 회차 출석을 수기로 추가/취소할 수 있고, <b>구민 확인 배지</b>를 클릭하면 확인 상태를 전환할 수 있습니다.</p>
+
+                <div id="bulk-delete-bar" class="flex items-center justify-between">
+                    <p class="text-xs text-slate-400">체크박스로 여러 명을 선택해 한 번에 삭제할 수 있습니다.</p>
+                    <button onclick="deleteSelectedStudents()" class="px-3 py-1.5 bg-rose-50 text-rose-600 border border-rose-200 font-bold rounded-lg text-xs hover:bg-rose-100 transition-all">🗑️ 선택 삭제</button>
+                </div>
+
+                <div class="overflow-x-auto rounded-xl border border-slate-100">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead>
+                            <tr class="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100 text-xs uppercase">
+                                <th id="th-select-col" class="p-3 w-8"><input type="checkbox" id="admin-select-all-students" onchange="toggleAllStudentCheckboxes()" class="w-4 h-4 accent-emerald-600"></th>
+                                <th class="p-3">이름</th>
+                                <th class="p-3">성별</th>
+                                <th class="p-3">출생년도</th>
+                                <th class="p-3">전화번호</th>
+                                <th class="p-3">구민 확인</th>
+                                <th class="p-3">출석 회차 현황 (날짜)</th>
+                                <th class="p-3 text-center">출석일수</th>
+                                <th class="p-3 text-center">수료 상태</th>
+                                <th id="th-delete-col" class="p-3 text-center">삭제</th>
+                            </tr>
+                        </thead>
+                        <tbody id="admin-table-body" class="divide-y divide-slate-100 text-slate-700 font-medium">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <section id="page-log" class="hidden space-y-4">
+            <div class="bg-white p-6 rounded-2xl shadow-xs border border-slate-100 space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <h3 class="text-lg font-bold text-slate-700 flex items-center gap-2">📋 관리자 활동 로그</h3>
+                    <input type="text" id="log-search" oninput="renderLogTable()" placeholder="🔍 관리자 이름 또는 내용 검색" class="w-full sm:w-72 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <p class="text-[11px] text-slate-400">최근 500건까지 표시되며, 다른 관리자의 변경 내역도 실시간으로 반영됩니다.</p>
+                <div class="overflow-x-auto rounded-xl border border-slate-100">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead>
+                            <tr class="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100 text-xs uppercase">
+                                <th class="p-3 w-40">시간</th>
+                                <th class="p-3 w-32">누가</th>
+                                <th class="p-3">무엇을</th>
+                            </tr>
+                        </thead>
+                        <tbody id="log-table-body" class="divide-y divide-slate-100 text-slate-700 font-medium">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="qr-modal" class="hidden fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        <div class="bg-white w-full max-w-sm rounded-2xl shadow-xl overflow-hidden p-6 space-y-4 text-center">
+            <div class="flex justify-between items-start">
+                <h3 class="text-lg font-bold text-slate-900">📱 출석 체크 QR코드</h3>
+                <button onclick="closeQrModal()" class="text-slate-400 hover:text-slate-600 text-lg font-bold">✕</button>
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 mb-1 text-left">QR 연결 대상</label>
+                <select id="qr-course-select" onchange="renderQrCode()" class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    <option value="">전체 강좌 선택 화면 (특정 강좌 지정 안 함)</option>
+                </select>
+            </div>
+
+            <div class="flex justify-center py-2">
+                <img id="qr-code-image" src="" alt="QR 코드" class="w-56 h-56 border border-slate-100 rounded-xl bg-white">
+            </div>
+
+            <div class="space-y-1.5">
+                <p class="text-[11px] text-slate-400">학습자가 이 QR을 스캔하면 아래 주소로 바로 이동합니다.</p>
+                <div class="flex gap-1.5">
+                    <input id="qr-url-text" type="text" readonly class="flex-1 p-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-500">
+                    <button onclick="copyQrUrl()" class="px-3 py-2 bg-slate-700 text-white text-xs font-bold rounded-lg hover:bg-slate-800 shrink-0">복사</button>
+                </div>
+            </div>
+
+            <a id="qr-download-link" href="#" download="attendance_qr.png" class="block w-full py-2.5 bg-emerald-600 text-white font-bold rounded-lg text-sm hover:bg-emerald-700 transition-all">🖼️ QR 이미지 다운로드 (인쇄용)</a>
+            <p id="qr-hosting-warning" class="hidden text-[11px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg p-2 text-left"></p>
+        </div>
+    </div>
+
+    <div id="status-modal" class="hidden fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        <div class="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden transform transition-all p-6 space-y-4">
+            <div class="flex justify-between items-start">
+                <div>
+                    <h3 id="modal-student-name" class="text-xl font-bold text-slate-900">수강생</h3>
+                    <p id="modal-course-name" class="text-xs text-slate-400 mt-0.5">강좌명</p>
+                    <p id="modal-profile-line" class="text-xs text-slate-400 mt-0.5"></p>
+                </div>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 text-lg font-bold">✕</button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+                <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                    <p class="text-xs text-slate-400 font-semibold">출석 일수</p>
+                    <p class="text-lg font-bold text-emerald-600 mt-0.5" id="modal-attendance-count">0 / 10회</p>
+                </div>
+                <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                    <p class="text-xs text-slate-400 font-semibold">구민 여부 확인</p>
+                    <p class="text-lg font-bold mt-0.5" id="modal-citizen-status">확인전</p>
+                </div>
+            </div>
+
+            <div id="modal-final-box" class="p-4 rounded-xl text-center font-bold text-sm"></div>
+
+            <div class="space-y-1.5">
+                <h4 class="text-xs font-bold text-slate-500">회차별 상세 출석일시</h4>
+                <div id="modal-session-list" class="max-h-40 overflow-y-auto space-y-1 pr-1 text-xs">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ⚠️ Supabase(https://supabase.com) 무료 프로젝트를 만든 뒤,
+        // 왼쪽 메뉴 [Project Settings] → [API]에서 나오는 Project URL과 anon public key를 아래에 붙여넣으세요.
+        // 아래 SQL을 Supabase의 [SQL Editor]에서 한 번 실행해 테이블을 만들어야 합니다:
+        //
+        //   create table app_state (
+        //     id text primary key,
+        //     data jsonb not null,
+        //     updated_at timestamptz not null default now()
+        //   );
+        //   create table app_logs (
+        //     id bigint generated always as identity primary key,
+        //     actor text,
+        //     action text,
+        //     created_at timestamptz not null default now()
+        //   );
+        //   alter table app_state enable row level security;
+        //   alter table app_logs enable row level security;
+        //   create policy "allow all - app_state" on app_state for all using (true) with check (true);
+        //   create policy "allow all - app_logs" on app_logs for all using (true) with check (true);
+        //   alter publication supabase_realtime add table app_state, app_logs;
+        //
+        // (이 앱은 비밀번호를 자체적으로 관리하므로 위 정책은 기존 Firebase "테스트 모드"와 동일한 수준의 개방 정책입니다.
+        //  더 엄격하게 막고 싶다면 Supabase 문서의 Row Level Security 정책을 참고해 조건을 추가하세요.)
+        const SUPABASE_URL = "https://kgcnojfqpidjmbuksbji.supabase.co";
+        const SUPABASE_ANON_KEY = "sb_publishable_IvIvYT7NB2ZFRg6CsO4eEA_6DzD5l7p";
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const MAX_LOG_ROWS = 500;
+
+        const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
+
+        let systemData = null;
+        let isSaving = false;
+        let newCourseHolidays = [];
+        let editCourseHolidays = [];
+        let isWideAdminView = true; // 관리자 페이지 기본을 넓게 표시
+        let logRowsCache = [];
+
+        function todayStr() {
+            return formatDate(new Date());
+        }
+
+        function formatDate(d) {
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        function getDefaultData() {
+            return {
+                adminAccounts: [{ id: "a1", name: "관리자", password: "admin1234", role: "super", allowedCourseIds: [] }],
+                courses: [
+                    { id: "c1", name: "인공지능 실무 기본반", totalSessions: 10, cutoffSessions: 6, startDate: todayStr(), days: [1, 3], holidays: [] },
+                    { id: "c2", name: "스마트폰 시니어 활용과정", totalSessions: 10, cutoffSessions: 6, startDate: todayStr(), days: [2, 4], holidays: [] }
+                ],
+                students: []
+            };
+        }
+
+        function ensureAdminAccounts() {
+            if (!systemData) return;
+            if (!systemData.adminAccounts || systemData.adminAccounts.length === 0) {
+                systemData.adminAccounts = [{
+                    id: "a1",
+                    name: "관리자",
+                    password: systemData.adminPassword || "admin1234",
+                    role: "super",
+                    allowedCourseIds: []
+                }];
+            }
+            // 기존(권한 등급 도입 이전)에 만들어진 계정은 슈퍼관리자로 간주합니다.
+            systemData.adminAccounts.forEach(a => {
+                if (!a.role) a.role = "super";
+                if (!Array.isArray(a.allowedCourseIds)) a.allowedCourseIds = [];
+            });
+        }
+
+        // ===================== 권한 등급(Role) 헬퍼 =====================
+        const ROLE_LABELS = {
+            super: "👑 슈퍼관리자",
+            admin1: "🛠️ 관리자1",
+            admin2: "👁️ 관리자2"
+        };
+
+        function getCurrentAdminAccount() {
+            const accId = sessionStorage.getItem('admin_account_id');
+            if (!accId || !systemData || !systemData.adminAccounts) return null;
+            return systemData.adminAccounts.find(a => a.id === accId) || null;
+        }
+
+        function getCurrentAdminRole() {
+            const acc = getCurrentAdminAccount();
+            return acc ? (acc.role || 'super') : null;
+        }
+
+        function isSuperAdmin() { return getCurrentAdminRole() === 'super'; }
+        function isAdmin1() { return getCurrentAdminRole() === 'admin1'; }
+        function isAdmin2() { return getCurrentAdminRole() === 'admin2'; }
+
+        // 관리자2(출석 조회 전용)는 조회 외 모든 변경 기능을 사용할 수 없습니다.
+        function blockIfReadOnlyAdmin() {
+            if (isAdmin2()) { alert("관리자2 계정은 지정된 강좌의 출석 여부 확인만 가능하며, 이 기능은 사용할 수 없습니다."); return true; }
+            return false;
+        }
+        // 관리자 계정 관리(권한 부여 등)는 슈퍼관리자만 사용할 수 있습니다.
+        function blockIfNotSuperAdmin() {
+            if (!isSuperAdmin()) { alert("이 기능은 슈퍼관리자만 사용할 수 있습니다."); return true; }
+            return false;
+        }
+
+        // 관리자 대시보드의 "강좌 선택" 드롭다운에 노출할 강좌 목록.
+        // 관리자2는 슈퍼관리자가 지정한 강좌만 볼 수 있습니다.
+        function getAdminFilterCourses() {
+            if (!systemData) return [];
+            if (isAdmin2()) {
+                const acc = getCurrentAdminAccount();
+                const allowed = (acc && acc.allowedCourseIds) || [];
+                return systemData.courses.filter(c => allowed.includes(c.id));
+            }
+            return systemData.courses;
+        }
+
+        function setSyncBadge(state) {
+            const el = document.getElementById('sync-badge');
+            if (!el) return;
+            if (state === 'saving') { el.textContent = '☁️ 저장 중...'; el.className = "text-xs font-semibold text-amber-200"; }
+            else if (state === 'error') { el.textContent = '⚠️ 서버 연결 실패'; el.className = "text-xs font-semibold text-rose-200"; }
+            else { el.textContent = '☁️ 동기화됨'; el.className = "text-xs font-semibold text-emerald-200"; }
+        }
+
+        // ===================== 안전 저장 (덮어쓰기 방지) =====================
+        // 예전 방식: 내 화면의 전체 데이터를 서버에 통째로 덮어씀 -> 오래 열어 둔 화면이 저장하면 최신 데이터가 사라짐.
+        // 새 방식: "내가 바꾼 부분"만 계산해서, 저장 직전에 가져온 서버 최신본에 합친 뒤 저장합니다.
+        //          (저장 순간 서버 데이터가 바뀌었으면 자동으로 다시 시도)
+        let baseData = null;        // 서버에서 마지막으로 확인한 상태
+        let baseUpdatedAt = null;   // 그때의 updated_at
+        let loadFailed = false;     // 서버에서 불러오지 못했으면 저장을 막습니다
+        let saveQueue = Promise.resolve();
+        const LIST_KEYS = ['courses', 'students', 'adminAccounts'];
+        const SHRINK_COURSES = 3, SHRINK_STUDENTS = 60;
+
+        const deepClone = o => JSON.parse(JSON.stringify(o));
+        const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+        function computeChanges(base, local) {
+            const ch = { lists: {}, top: {} };
+            for (const key of LIST_KEYS) {
+                const b = base[key] || [], l = local[key] || [];
+                const bm = new Map(b.map(x => [x.id, x])), lm = new Map(l.map(x => [x.id, x]));
+                const added = [], removed = [], modified = [];
+                l.forEach(x => {
+                    const o = bm.get(x.id);
+                    if (!o) added.push(x);
+                    else if (!sameJson(o, x)) modified.push({ id: x.id, base: o, local: x });
+                });
+                b.forEach(x => { if (!lm.has(x.id)) removed.push(x.id); });
+                ch.lists[key] = { added, removed, modified };
+            }
+            for (const k of Object.keys(local)) {
+                if (!LIST_KEYS.includes(k) && !sameJson(base[k], local[k])) ch.top[k] = { set: local[k] };
+            }
+            for (const k of Object.keys(base)) {
+                if (!LIST_KEYS.includes(k) && !(k in local)) ch.top[k] = { del: true };
+            }
+            return ch;
+        }
+
+        function mergeAttendance(t, b, l) {
+            if (!Array.isArray(t.attendance)) t.attendance = [];
+            const a = t.attendance;
+            for (let i = 0; i < l.length; i++) {
+                if ((b[i] || "") !== (l[i] || "")) a[i] = l[i];
+            }
+            while (a.length < l.length) a.push("");
+            if (l.length < b.length) a.length = l.length;
+            for (let i = 0; i < a.length; i++) if (a[i] == null) a[i] = "";
+        }
+
+        function mergeEntity(t, b, l) {
+            for (const k of new Set([...Object.keys(b), ...Object.keys(l)])) {
+                if (sameJson(b[k], l[k])) continue;
+                if (k === 'attendance' && Array.isArray(l[k])) { mergeAttendance(t, Array.isArray(b[k]) ? b[k] : [], l[k]); continue; }
+                if (k in l) t[k] = deepClone(l[k]); else delete t[k];
+            }
+        }
+
+        function applyChanges(target, ch) {
+            const out = deepClone(target);
+            for (const key of LIST_KEYS) {
+                const { added, removed, modified } = ch.lists[key];
+                if (!Array.isArray(out[key])) out[key] = [];
+                const arr = out[key];
+                removed.forEach(id => { const i = arr.findIndex(x => x.id === id); if (i >= 0) arr.splice(i, 1); });
+                modified.forEach(m => { const t = arr.find(x => x.id === m.id); if (t) mergeEntity(t, m.base, m.local); });
+                added.forEach(x => { if (!arr.some(y => y.id === x.id)) arr.push(deepClone(x)); });
+            }
+            for (const k of Object.keys(ch.top)) {
+                if (ch.top[k].del) delete out[k]; else out[k] = deepClone(ch.top[k].set);
+            }
+            return out;
+        }
+
+        function refreshViews() {
+            if (!systemData) return;
+            populateSelectOptions();
+            if (!document.getElementById('page-student').classList.contains('hidden')) renderStudentList();
+            if (!document.getElementById('page-admin').classList.contains('hidden')) {
+                renderAdminTable();
+                if (isSuperAdmin()) renderAdminAccountList();
+            }
+        }
+
+        // 서버 최신본을 받아오되, 내 화면에서 아직 저장 안 된 변경은 그 위에 유지합니다.
+        function rebaseOnto(remoteData, remoteUpdatedAt) {
+            const pending = baseData ? computeChanges(baseData, systemData) : null;
+            baseData = deepClone(remoteData);
+            baseUpdatedAt = remoteUpdatedAt;
+            systemData = pending ? applyChanges(remoteData, pending) : deepClone(remoteData);
+            ensureAdminAccounts();
+        }
+
+        async function loadSystemData() {
+            try {
+                const { data, error } = await supabaseClient.from('app_state').select('data, updated_at').eq('id', 'main').maybeSingle();
+                if (error) throw error;
+                if (data) {
+                    systemData = data.data;
+                    baseData = deepClone(data.data);
+                    baseUpdatedAt = data.updated_at;
+                } else {
+                    // 아직 데이터가 없으면(최초 실행) 기본 데이터로 새로 만듭니다.
+                    systemData = getDefaultData();
+                    const { error: insertErr } = await supabaseClient.from('app_state').insert({ id: 'main', data: systemData });
+                    if (insertErr) throw insertErr;
+                    const { data: again } = await supabaseClient.from('app_state').select('data, updated_at').eq('id', 'main').maybeSingle();
+                    baseData = deepClone(again ? again.data : systemData);
+                    baseUpdatedAt = again ? again.updated_at : null;
+                }
+                loadFailed = false;
+                setSyncBadge('ok');
+            } catch (err) {
+                console.error("불러오기 실패:", err);
+                // 불러오지 못한 상태에서 저장하면 서버 데이터를 덮어쓸 수 있으므로 저장을 막습니다.
+                loadFailed = true;
+                setSyncBadge('error');
+                if (!systemData) systemData = getDefaultData();
+                if (!baseData) baseData = deepClone(systemData);
+                alert("서버에서 데이터를 불러오지 못했습니다.\n인터넷 연결을 확인하고 페이지를 새로고침해 주세요.\n(불러오기 전에는 저장되지 않으니 데이터는 안전합니다.)");
+            }
+            ensureAdminAccounts();
+        }
+
+        // actionText를 넘기면 "관리자 활동 로그"에도 함께 기록됩니다.
+        // actorOverride를 넘기면 로그인한 관리자가 아니라 해당 이름(예: 학습자 본인)으로 기록됩니다.
+        function saveToStorage(actionText, actorOverride) {
+            // 저장은 한 번에 하나씩 순서대로 처리합니다.
+            saveQueue = saveQueue.then(() => doSave(actionText, actorOverride)).catch(e => console.error(e));
+            return saveQueue;
+        }
+
+        async function doSave(actionText, actorOverride) {
+            if (!systemData) return;
+            if (loadFailed) {
+                alert("서버 데이터를 불러오지 못한 상태라 저장하지 않았습니다.\n페이지를 새로고침한 뒤 다시 시도해 주세요.");
+                return;
+            }
+            isSaving = true;
+            setSyncBadge('saving');
+            try {
+                const snapshot = deepClone(systemData);
+                const changes = computeChanges(baseData, snapshot);
+                const removedCourses = changes.lists.courses.removed.length;
+                const removedStudents = changes.lists.students.removed.length;
+                const bigRemoval = removedCourses >= SHRINK_COURSES || removedStudents >= SHRINK_STUDENTS;
+
+                let saved = null;
+                for (let attempt = 0; attempt < 6 && !saved; attempt++) {
+                    const { data: row, error } = await supabaseClient.from('app_state').select('data, updated_at').eq('id', 'main').maybeSingle();
+                    if (error) throw error;
+                    if (!row) throw new Error("서버에 main 데이터가 없습니다.");
+
+                    const merged = applyChanges(row.data, changes);
+                    // 의도적인 대량 삭제(분기 마감 등)만 서버 보호장치를 통과하도록 표시합니다.
+                    if (bigRemoval) merged._shrinkOk = Date.now(); else delete merged._shrinkOk;
+
+                    const { data: upd, error: updErr } = await supabaseClient.from('app_state')
+                        .update({ data: merged, updated_at: new Date().toISOString() })
+                        .eq('id', 'main')
+                        .eq('updated_at', row.updated_at)   // 그 사이 누가 저장했으면 0건 -> 다시 시도
+                        .select('updated_at');
+                    if (updErr) throw updErr;
+                    if (upd && upd.length === 1) saved = { merged, updatedAt: upd[0].updated_at, hadRemote: !sameJson(row.data, baseData) };
+                }
+                if (!saved) throw new Error("다른 사용자의 저장과 계속 충돌했습니다. 잠시 후 다시 시도해 주세요.");
+
+                // 저장하는 동안 화면에서 추가로 바뀐 내용이 있으면 그 위에 얹어 유지합니다.
+                const during = computeChanges(snapshot, systemData);
+                baseData = deepClone(saved.merged);
+                baseUpdatedAt = saved.updatedAt;
+                systemData = applyChanges(saved.merged, during);
+                ensureAdminAccounts();
+                if (saved.hadRemote) { try { refreshViews(); } catch (e) { console.error(e); } }   // 다른 사람의 변경이 합쳐졌으면 화면 갱신
+
+                setSyncBadge('ok');
+                if (actionText) {
+                    const actor = actorOverride || getCurrentAdminName();
+                    if (actor) await logActivity(actor, actionText);
+                }
+            } catch (err) {
+                console.error("저장 실패:", err);
+                setSyncBadge('error');
+                const msg = (err && err.message) ? err.message : String(err);
+                alert("서버 저장에 실패했습니다.\n" + msg + "\n\n페이지를 새로고침한 뒤 다시 시도해 주세요.");
+            } finally {
+                isSaving = false;
+            }
+        }
+
+        // 서버에 더 새로운 데이터가 있으면 가져옵니다. (실시간 연결이 끊긴 화면, 오래 켜 둔 화면 대비)
+        async function syncFromServer(force) {
+            if (isSaving) return;
+            try {
+                if (loadFailed) {
+                    const { data, error } = await supabaseClient.from('app_state').select('data, updated_at').eq('id', 'main').maybeSingle();
+                    if (error || !data) return;
+                    systemData = data.data; baseData = deepClone(data.data); baseUpdatedAt = data.updated_at;
+                    loadFailed = false; ensureAdminAccounts(); refreshViews(); setSyncBadge('ok');
+                    return;
+                }
+                const { data: head, error: hErr } = await supabaseClient.from('app_state').select('updated_at').eq('id', 'main').maybeSingle();
+                if (hErr) throw hErr;
+                if (!head) return;
+                if (!force && baseUpdatedAt && Date.parse(head.updated_at) <= Date.parse(baseUpdatedAt)) return;
+                const { data: row, error } = await supabaseClient.from('app_state').select('data, updated_at').eq('id', 'main').maybeSingle();
+                if (error) throw error;
+                if (!row || isSaving) return;
+                rebaseOnto(row.data, row.updated_at);
+                refreshViews();
+                setSyncBadge('ok');
+            } catch (err) {
+                console.error("동기화 확인 실패:", err);
+                setSyncBadge('error');
+            }
+        }
+
+        function getCurrentAdminName() {
+            const accId = sessionStorage.getItem('admin_account_id');
+            if (!accId || !systemData || !systemData.adminAccounts) return null;
+            const acc = systemData.adminAccounts.find(a => a.id === accId);
+            return acc ? acc.name : null;
+        }
+
+        async function logActivity(actor, action) {
+            try {
+                const { error } = await supabaseClient.from('app_logs').insert({ actor: actor, action: action });
+                if (error) throw error;
+            } catch (err) {
+                console.error("활동 로그 기록 실패:", err);
+            }
+        }
+
+        async function startLogListener() {
+            try {
+                const { data, error } = await supabaseClient.from('app_logs').select('*').order('created_at', { ascending: false }).limit(MAX_LOG_ROWS);
+                if (error) throw error;
+                logRowsCache = data || [];
+                renderLogTable();
+            } catch (err) {
+                console.error("활동 로그 초기 조회 실패:", err);
+            }
+
+            supabaseClient.channel('app_logs_changes')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'app_logs' }, payload => {
+                    logRowsCache = [payload.new, ...logRowsCache].slice(0, MAX_LOG_ROWS);
+                    renderLogTable();
+                })
+                .subscribe();
+        }
+
+        function renderLogTable() {
+            const body = document.getElementById('log-table-body');
+            if (!body) return;
+            const term = (document.getElementById('log-search')?.value || '').trim();
+            const rows = logRowsCache.filter(r =>
+                !term || (r.actor || '').includes(term) || (r.action || '').includes(term)
+            );
+            if (rows.length === 0) {
+                body.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-slate-400 text-sm">기록된 활동이 없습니다.</td></tr>`;
+                return;
+            }
+            body.innerHTML = rows.map(r => {
+                let timeLabel = r.created_at ? new Date(r.created_at).toLocaleString('ko-KR') : '(기록 중...)';
+                return `<tr>
+                    <td class="p-3 text-xs text-slate-400 whitespace-nowrap">${timeLabel}</td>
+                    <td class="p-3 font-bold text-emerald-700 whitespace-nowrap">${r.actor || '-'}</td>
+                    <td class="p-3">${r.action || '-'}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        let qrForcedCourseId = null; // QR을 스캔해서 들어온 경우, 그 강좌를 강제로 학습자 드롭다운에 포함
+
+        window.onload = async function() {
+            document.getElementById('loading-overlay').classList.remove('hidden');
+            await loadSystemData();
+            document.getElementById('loading-overlay').classList.add('hidden');
+
+            const urlParams = new URLSearchParams(window.location.search);
+            qrForcedCourseId = urlParams.get('course');
+
+            buildDayChips('new-course-days');
+            buildDayChips('edit-course-days');
+            populateSelectOptions();
+
+            if (qrForcedCourseId && systemData.courses.some(c => c.id === qrForcedCourseId)) {
+                switchTab('student');
+                const sSelect = document.getElementById('student-course-select');
+                sSelect.value = qrForcedCourseId;
+            }
+
+            renderStudentList();
+            renderAdminTable();
+            renderAdminAccountList();
+            syncAdminCourseSettings();
+            renderHolidayChips('new');
+
+            updateAuthUI();
+            startRealtimeSync();
+            startLogListener();
+        }
+
+        // Supabase 실시간 구독: 다른 기기/관리자의 변경 사항이 저장되는 즉시(수 초 이내) 반영됩니다.
+        function startRealtimeSync() {
+            supabaseClient.channel('app_state_changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'app_state', filter: 'id=eq.main' }, payload => {
+                    if (isSaving) return; // 저장 중에는 저장 로직이 서버 최신본을 직접 합치므로 건너뜁니다
+                    if (!payload.new || !payload.new.data) return;
+                    // 이미 알고 있는(내가 저장했거나 이미 받은) 버전이면 무시
+                    if (baseUpdatedAt && payload.new.updated_at && Date.parse(payload.new.updated_at) <= Date.parse(baseUpdatedAt)) return;
+                    rebaseOnto(payload.new.data, payload.new.updated_at);
+                    refreshViews();
+                    setSyncBadge('ok');
+                })
+                .subscribe(status => {
+                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                        console.error("실시간 동기화 오류:", status);
+                        setSyncBadge('error');
+                    }
+                });
+
+            // 실시간 연결이 끊겨도 오래된 화면이 되지 않도록 안전장치
+            setInterval(() => { if (!document.hidden) syncFromServer(false); }, 30000);
+            document.addEventListener('visibilitychange', () => { if (!document.hidden) syncFromServer(false); });
+            window.addEventListener('online', () => syncFromServer(false));
+            window.addEventListener('focus', () => syncFromServer(false));
+            window.addEventListener('pageshow', e => { if (e.persisted) syncFromServer(true); });
+        }
+
+        function buildDayChips(containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            WEEKDAY_LABELS.forEach((label, idx) => {
+                const wrapper = document.createElement('label');
+                wrapper.className = "day-chip";
+                wrapper.innerHTML = `<input type="checkbox" value="${idx}"><span>${label}</span>`;
+                container.appendChild(wrapper);
+            });
+        }
+
+        function getCheckedDays(containerId) {
+            return Array.from(document.querySelectorAll(`#${containerId} input:checked`)).map(el => parseInt(el.value, 10));
+        }
+
+        function setCheckedDays(containerId, days) {
+            document.querySelectorAll(`#${containerId} input`).forEach(el => {
+                el.checked = days.includes(parseInt(el.value, 10));
+            });
+        }
+
+        // ===================== 휴강일 관리 =====================
+
+        function addHoliday(mode) {
+            const inputId = mode === 'new' ? 'new-course-holiday-input' : 'edit-course-holiday-input';
+            const date = document.getElementById(inputId).value;
+            if (!date) return alert("휴강일 날짜를 선택해 주세요.");
+            const arr = mode === 'new' ? newCourseHolidays : editCourseHolidays;
+            if (!arr.includes(date)) arr.push(date);
+            arr.sort();
+            document.getElementById(inputId).value = '';
+            renderHolidayChips(mode);
+        }
+
+        function removeHoliday(mode, date) {
+            const arr = mode === 'new' ? newCourseHolidays : editCourseHolidays;
+            const idx = arr.indexOf(date);
+            if (idx > -1) arr.splice(idx, 1);
+            renderHolidayChips(mode);
+        }
+
+        function renderHolidayChips(mode) {
+            const containerId = mode === 'new' ? 'new-course-holiday-list' : 'edit-course-holiday-list';
+            const arr = mode === 'new' ? newCourseHolidays : editCourseHolidays;
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            if (arr.length === 0) {
+                container.innerHTML = `<span class="text-xs text-slate-300">등록된 휴강일 없음</span>`;
+                return;
+            }
+            container.innerHTML = arr.map(d => `
+                <span class="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 text-rose-600 text-xs font-semibold px-2 py-1 rounded-full mr-1 mb-1">
+                    ${d} <button type="button" onclick="removeHoliday('${mode}','${d}')" class="hover:text-rose-900">✕</button>
+                </span>
+            `).join('');
+        }
+
+        // ===================== 관리자 로그인(비밀번호) =====================
+
+        function switchTab(tab) {
+            const studentPage = document.getElementById('page-student');
+            const adminPage = document.getElementById('page-admin');
+            const adminLocked = document.getElementById('page-admin-locked');
+            const logPage = document.getElementById('page-log');
+            const studentBtn = document.getElementById('tab-student-btn');
+            const adminBtn = document.getElementById('tab-admin-btn');
+            const logBtn = document.getElementById('tab-log-btn');
+            const logoutBtn = document.getElementById('admin-logout-btn');
+
+            const mainEl = document.getElementById('main-container');
+            const isLoggedIn = sessionStorage.getItem('admin_unlocked') === 'yes';
+            const canSeeLog = isLoggedIn && isSuperAdmin(); // 활동 로그(누가 수정했는지)는 슈퍼관리자만 확인 가능
+
+            logBtn.classList.toggle('hidden', !canSeeLog);
+            logoutBtn.classList.toggle('hidden', !isLoggedIn);
+
+            const inactiveBtnClass = "px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 transition-all text-emerald-100";
+            const activeBtnClass = "px-4 py-2 rounded-lg font-medium bg-white text-emerald-600 shadow-sm transition-all";
+
+            studentPage.classList.add('hidden');
+            adminPage.classList.add('hidden');
+            adminLocked.classList.add('hidden');
+            logPage.classList.add('hidden');
+            studentBtn.className = inactiveBtnClass;
+            adminBtn.className = inactiveBtnClass;
+            logBtn.className = (canSeeLog ? "" : "hidden ") + inactiveBtnClass;
+
+            if (tab === 'log' && !canSeeLog) tab = 'admin'; // 권한 없는 계정이 로그 탭에 직접 접근하는 것을 방지
+
+            if (tab === 'student') {
+                studentPage.classList.remove('hidden');
+                studentBtn.className = activeBtnClass;
+                mainEl.classList.remove('max-w-[1800px]');
+                mainEl.classList.add('max-w-6xl');
+                renderStudentList();
+                return;
+            }
+
+            mainEl.classList.remove('max-w-6xl');
+            mainEl.classList.add(isWideAdminView ? 'max-w-[1800px]' : 'max-w-6xl');
+
+            if (!isLoggedIn) {
+                adminLocked.classList.remove('hidden');
+                adminBtn.className = activeBtnClass;
+                document.getElementById('admin-password-input').value = '';
+                const hint = document.getElementById('admin-first-time-hint');
+                const hasDefaultPw = systemData.adminAccounts.some(a => a.password === 'admin1234');
+                hint.innerText = hasDefaultPw
+                    ? "최초 비밀번호는 admin1234 입니다. 로그인 후 꼭 변경하세요. (비밀번호를 잊었다면 다른 관리자에게 문의하세요.)"
+                    : "비밀번호를 잊었다면 다른 관리자에게 문의하세요.";
+                document.getElementById('admin-password-input').focus();
+                return;
+            }
+
+            if (tab === 'log') {
+                logPage.classList.remove('hidden');
+                logBtn.className = activeBtnClass;
+                renderLogTable();
+            } else {
+                adminPage.classList.remove('hidden');
+                adminBtn.className = activeBtnClass;
+                applyAdminRoleUI();
+                populateSelectOptions();
+                renderAdminTable();
+                if (isSuperAdmin()) renderAdminAccountList();
+            }
+        }
+
+        function updateAuthUI() {
+            const isLoggedIn = sessionStorage.getItem('admin_unlocked') === 'yes';
+            document.getElementById('tab-log-btn').classList.toggle('hidden', !(isLoggedIn && isSuperAdmin()));
+            document.getElementById('admin-logout-btn').classList.toggle('hidden', !isLoggedIn);
+        }
+
+        // 권한 등급에 따라 관리자 화면의 패널/버튼을 보이거나 숨깁니다.
+        function applyAdminRoleUI() {
+            const role = getCurrentAdminRole() || 'super';
+
+            const superOnlyPanels = ['panel-course-create', 'panel-course-edit', 'panel-student-register', 'panel-bulk-excel', 'panel-admin-accounts', 'panel-download-roster', 'panel-quarter-close'];
+            const admin1AlsoPanels = ['panel-course-create', 'panel-course-edit', 'panel-student-register', 'panel-bulk-excel', 'panel-download-roster']; // admin1은 계정관리 제외 전부 가능
+
+            const visibleForRole = (id) => {
+                if (role === 'super') return true;
+                if (role === 'admin1') return admin1AlsoPanels.includes(id);
+                return false; // admin2는 아래 패널 전부 숨김
+            };
+
+            superOnlyPanels.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.toggle('hidden', !visibleForRole(id));
+            });
+
+            // 대시보드 상단 다운로드/QR 버튼: admin2는 사용 불가 (다운로드 등 전부 불가)
+            const dlBtn = document.getElementById('btn-download-course-roster');
+            const qrBtn = document.getElementById('btn-open-qr');
+            if (dlBtn) dlBtn.classList.toggle('hidden', role === 'admin2');
+            if (qrBtn) qrBtn.classList.toggle('hidden', role === 'admin2');
+
+            // 학습자 선택 삭제 바 및 체크박스/삭제 열: admin2는 조회만 가능
+            const bulkBar = document.getElementById('bulk-delete-bar');
+            const thSelect = document.getElementById('th-select-col');
+            const thDelete = document.getElementById('th-delete-col');
+            if (bulkBar) bulkBar.classList.toggle('hidden', role === 'admin2');
+            if (thSelect) thSelect.classList.toggle('hidden', role === 'admin2');
+            if (thDelete) thDelete.classList.toggle('hidden', role === 'admin2');
+            const editTip = document.getElementById('edit-tip-text');
+            if (editTip) editTip.classList.toggle('hidden', role === 'admin2');
+        }
+
+        function adminLogout() {
+            const name = getCurrentAdminName();
+            sessionStorage.removeItem('admin_unlocked');
+            sessionStorage.removeItem('admin_account_id');
+            if (name) logActivity(name, "관리자 로그아웃");
+            switchTab('student');
+        }
+
+        function toggleAdminWidth() {
+            isWideAdminView = !isWideAdminView;
+            const mainEl = document.getElementById('main-container');
+            mainEl.classList.toggle('max-w-[1800px]', isWideAdminView);
+            mainEl.classList.toggle('max-w-6xl', !isWideAdminView);
+            const btn = document.getElementById('wide-toggle-btn');
+            if (btn) btn.innerText = isWideAdminView ? "↔️ 화면 좁게 보기" : "↔️ 화면 넓게 보기";
+        }
+
+        function tryAdminLogin() {
+            const input = document.getElementById('admin-password-input').value;
+            const account = systemData.adminAccounts.find(a => a.password === input);
+            if (account) {
+                sessionStorage.setItem('admin_unlocked', 'yes');
+                sessionStorage.setItem('admin_account_id', account.id);
+                logActivity(account.name, "관리자 로그인");
+                switchTab('admin');
+            } else {
+                alert("비밀번호가 올바르지 않습니다.");
+            }
+        }
+
+        let editingAdminAccountId = null; // null이면 "추가" 모드, 값이 있으면 "수정" 모드
+
+        function renderAdminAccountList() {
+            const listEl = document.getElementById('admin-account-list');
+            const selectEl = document.getElementById('pw-account-select');
+            if (!listEl || !selectEl || !systemData) return;
+
+            listEl.innerHTML = systemData.adminAccounts.map(a => {
+                const role = a.role || 'super';
+                const roleLabel = ROLE_LABELS[role] || role;
+                let courseNote = '';
+                if (role === 'admin2') {
+                    const names = (a.allowedCourseIds || []).map(cid => {
+                        const c = systemData.courses.find(cc => cc.id === cid);
+                        return c ? c.name : null;
+                    }).filter(Boolean);
+                    courseNote = `<p class="text-[10px] text-slate-400 mt-0.5">담당 강좌: ${names.length ? names.join(', ') : '(지정된 강좌 없음)'}</p>`;
+                }
+                return `
+                <div class="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                    <div class="flex items-center justify-between">
+                        <span class="font-semibold text-slate-600">👤 ${a.name} <span class="text-slate-400 font-normal">· ${roleLabel}</span></span>
+                        <span class="flex items-center gap-2 shrink-0">
+                            <button type="button" onclick="startEditAdminAccount('${a.id}')" class="text-slate-300 hover:text-emerald-600 font-bold" title="수정">✏️</button>
+                            <button type="button" onclick="deleteAdminAccount('${a.id}')" class="text-slate-300 hover:text-rose-500 font-bold" title="삭제">🗑️</button>
+                        </span>
+                    </div>
+                    ${courseNote}
+                </div>`;
+            }).join('');
+
+            const prevSelected = selectEl.value;
+            selectEl.innerHTML = '';
+            systemData.adminAccounts.forEach(a => selectEl.add(new Option(a.name, a.id)));
+            if (systemData.adminAccounts.some(a => a.id === prevSelected)) selectEl.value = prevSelected;
+        }
+
+        // 관리자 추가 폼의 "권한 등급" 선택에 따라 담당 강좌 선택 UI를 표시/숨김
+        function onAdminRoleFormChange() {
+            const role = document.getElementById('new-admin-role').value;
+            const picker = document.getElementById('new-admin-course-picker');
+            if (!picker) return;
+            picker.classList.toggle('hidden', role !== 'admin2');
+            if (role === 'admin2') renderAdminCourseCheckboxes();
+        }
+
+        function renderAdminCourseCheckboxes(preSelectedIds) {
+            const container = document.getElementById('new-admin-course-checkboxes');
+            if (!container || !systemData) return;
+            const selected = new Set(preSelectedIds || []);
+            container.innerHTML = systemData.courses.map(c => `
+                <label class="flex items-center gap-1.5 text-xs text-slate-600 py-0.5">
+                    <input type="checkbox" class="new-admin-course-checkbox w-3.5 h-3.5 accent-emerald-600" value="${c.id}" ${selected.has(c.id) ? 'checked' : ''}>
+                    ${c.name}
+                </label>
+            `).join('') || '<p class="text-[11px] text-slate-400">등록된 강좌가 없습니다.</p>';
+        }
+
+        function startEditAdminAccount(accountId) {
+            if (blockIfNotSuperAdmin()) return;
+            const acc = systemData.adminAccounts.find(a => a.id === accountId);
+            if (!acc) return;
+            editingAdminAccountId = accountId;
+            document.getElementById('new-admin-name').value = acc.name;
+            document.getElementById('new-admin-password').value = '';
+            document.getElementById('new-admin-role').value = acc.role || 'super';
+            document.getElementById('admin-add-form-title').innerText = `관리자 정보 수정 (${acc.name})`;
+            document.getElementById('admin-add-submit-btn').innerText = '수정 저장';
+            document.getElementById('admin-add-cancel-btn').classList.remove('hidden');
+            onAdminRoleFormChange();
+            if ((acc.role || 'super') === 'admin2') renderAdminCourseCheckboxes(acc.allowedCourseIds);
+        }
+
+        function cancelAdminEdit() {
+            editingAdminAccountId = null;
+            document.getElementById('new-admin-name').value = '';
+            document.getElementById('new-admin-password').value = '';
+            document.getElementById('new-admin-role').value = 'super';
+            document.getElementById('admin-add-form-title').innerText = '관리자 추가';
+            document.getElementById('admin-add-submit-btn').innerText = '관리자 추가';
+            document.getElementById('admin-add-cancel-btn').classList.add('hidden');
+            onAdminRoleFormChange();
+        }
+
+        function addAdminAccount() {
+            if (blockIfNotSuperAdmin()) return; // 권한 부여(계정 관리)는 슈퍼관리자만 가능
+
+            const name = document.getElementById('new-admin-name').value.trim();
+            const password = document.getElementById('new-admin-password').value;
+            const role = document.getElementById('new-admin-role').value;
+            const allowedCourseIds = role === 'admin2'
+                ? Array.from(document.querySelectorAll('.new-admin-course-checkbox:checked')).map(cb => cb.value)
+                : [];
+
+            if (!name) return alert("관리자 이름(구분)을 입력해 주세요.");
+
+            if (editingAdminAccountId) {
+                const acc = systemData.adminAccounts.find(a => a.id === editingAdminAccountId);
+                if (!acc) { cancelAdminEdit(); return; }
+                if (password && password.length < 4) return alert("비밀번호는 4자리 이상으로 입력해 주세요.");
+                acc.name = name;
+                acc.role = role;
+                acc.allowedCourseIds = allowedCourseIds;
+                if (password) acc.password = password;
+                saveToStorage(`관리자 계정 수정: ${name} (${ROLE_LABELS[role] || role})`);
+                cancelAdminEdit();
+                renderAdminAccountList();
+                alert(`[${name}] 관리자 계정 정보가 수정되었습니다.`);
+                return;
+            }
+
+            if (!password || password.length < 4) return alert("비밀번호는 4자리 이상으로 입력해 주세요.");
+
+            systemData.adminAccounts.push({ id: "a" + Date.now(), name: name, password: password, role: role, allowedCourseIds: allowedCourseIds });
+            saveToStorage(`관리자 계정 추가: ${name} (${ROLE_LABELS[role] || role})`);
+            renderAdminAccountList();
+            cancelAdminEdit();
+            alert(`[${name}] 관리자 계정이 추가되었습니다.`);
+        }
+
+        function deleteAdminAccount(accountId) {
+            if (blockIfNotSuperAdmin()) return;
+            if (systemData.adminAccounts.length <= 1) return alert("관리자 계정은 최소 1개 이상 있어야 합니다.");
+            const account = systemData.adminAccounts.find(a => a.id === accountId);
+            if (!account) return;
+            if (!confirm(`[${account.name}] 관리자 계정을 삭제하시겠습니까?`)) return;
+            systemData.adminAccounts = systemData.adminAccounts.filter(a => a.id !== accountId);
+            saveToStorage(`관리자 계정 삭제: ${account.name}`);
+            if (editingAdminAccountId === accountId) cancelAdminEdit();
+            renderAdminAccountList();
+        }
+
+        function changeAdminPassword() {
+            const accountId = document.getElementById('pw-account-select').value;
+            const account = systemData.adminAccounts.find(a => a.id === accountId);
+            const current = document.getElementById('pw-current').value;
+            const next = document.getElementById('pw-new').value;
+
+            if (!account) return alert("비밀번호를 변경할 관리자를 선택해 주세요.");
+            if (current !== account.password) return alert("현재 비밀번호가 일치하지 않습니다.");
+            if (!next || next.length < 4) return alert("새 비밀번호는 4자리 이상으로 입력해 주세요.");
+
+            account.password = next;
+            saveToStorage(`비밀번호 변경: ${account.name}`);
+            document.getElementById('pw-current').value = '';
+            document.getElementById('pw-new').value = '';
+            alert(`[${account.name}] 계정의 비밀번호가 변경되었습니다.`);
+        }
+
+        // ===================== 강좌 스케줄(요일/날짜/휴강일) 계산 =====================
+
+        function computeSessionDates(course) {
+            const dates = [];
+            if (!course.startDate || !course.days || course.days.length === 0) return dates;
+            const holidays = course.holidays || [];
+            let cur = new Date(course.startDate + "T00:00:00");
+            let guard = 0;
+            while (dates.length < course.totalSessions && guard < 3650) {
+                const dStr = formatDate(cur);
+                if (course.days.includes(cur.getDay()) && !holidays.includes(dStr)) {
+                    dates.push(dStr);
+                }
+                cur.setDate(cur.getDate() + 1);
+                guard++;
+            }
+            return dates;
+        }
+
+        function sortByNameKo(list) {
+            return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+        }
+
+        function getTodaySessionIndex(course) {
+            const dates = computeSessionDates(course);
+            return dates.indexOf(todayStr());
+        }
+
+        function populateSelectOptions() {
+            const sSelect = document.getElementById('student-course-select');
+            const aSelect = document.getElementById('admin-course-select');
+            const asSelect = document.getElementById('admin-student-course-select');
+            const atFilter = document.getElementById('admin-table-filter');
+
+            const prevS = sSelect.value, prevA = aSelect.value, prevAs = asSelect.value, prevAt = atFilter.value;
+
+            sSelect.innerHTML = ''; aSelect.innerHTML = ''; asSelect.innerHTML = ''; atFilter.innerHTML = '';
+
+            // 학습자 페이지 강좌 선택은 "오늘 실제 수업이 있는 강좌"만 노출
+            // (단, QR로 특정 강좌를 지정해 들어온 경우 그 강좌는 항상 목록에 포함)
+            let todaysCourses = systemData.courses.filter(c => getTodaySessionIndex(c) !== -1);
+            if (qrForcedCourseId && !todaysCourses.some(c => c.id === qrForcedCourseId)) {
+                const forced = systemData.courses.find(c => c.id === qrForcedCourseId);
+                if (forced) todaysCourses = [...todaysCourses, forced];
+            }
+            if (todaysCourses.length > 0) {
+                todaysCourses.forEach(course => sSelect.add(new Option(course.name, course.id)));
+            } else {
+                sSelect.add(new Option("오늘 운영 중인 강좌가 없습니다", ""));
+            }
+
+            systemData.courses.forEach(course => {
+                aSelect.add(new Option(course.name, course.id));
+                asSelect.add(new Option(course.name, course.id));
+            });
+            getAdminFilterCourses().forEach(course => atFilter.add(new Option(course.name, course.id)));
+
+            if (todaysCourses.some(c => c.id === prevS)) sSelect.value = prevS;
+            if (systemData.courses.some(c => c.id === prevA)) aSelect.value = prevA;
+            if (systemData.courses.some(c => c.id === prevAs)) asSelect.value = prevAs;
+            if (getAdminFilterCourses().some(c => c.id === prevAt)) atFilter.value = prevAt;
+            else if (atFilter.options.length > 0) atFilter.value = atFilter.options[0].value;
+
+            renderCourseCheckboxList();
+        }
+
+        // ===================== 학습자 페이지 (날짜 기반 자동 회차 + 체크박스 출석) =====================
+
+        function renderStudentList() {
+            const courseId = document.getElementById('student-course-select').value;
+            const grid = document.getElementById('student-grid');
+            const bannerText = document.getElementById('banner-text');
+            const bannerProgress = document.getElementById('banner-progress');
+
+            grid.innerHTML = '';
+            if (!courseId) return;
+
+            const currentCourse = systemData.courses.find(c => c.id === courseId);
+            if (!currentCourse) return;
+
+            const sessionIdx = getTodaySessionIndex(currentCourse);
+            const searchTerm = (document.getElementById('student-search').value || '').trim();
+            const allTargetStudents = sortByNameKo(systemData.students.filter(s => s.courseId === courseId));
+            const targetStudents = searchTerm
+                ? allTargetStudents.filter(s => s.name.includes(searchTerm))
+                : allTargetStudents;
+
+            if (sessionIdx === -1) {
+                bannerText.innerHTML = `오늘(${todayStr()})은 [${currentCourse.name}]의 예정된 수업일이 아닙니다.`;
+                bannerProgress.innerText = `- / ${allTargetStudents.length}`;
+            } else {
+                bannerText.innerHTML = `오늘(${todayStr()})은 [ ${sessionIdx + 1}회차 ] 수업일입니다.`;
+                const attendedCount = allTargetStudents.filter(s => s.attendance[sessionIdx] !== "").length;
+                bannerProgress.innerText = `${attendedCount} / ${allTargetStudents.length}`;
+            }
+
+            if (allTargetStudents.length === 0) {
+                grid.innerHTML = `<p class="col-span-full text-center py-8 text-sm text-slate-400 bg-slate-50 border border-dashed rounded-xl">등록된 학습자가 없습니다. 관리자 메뉴에서 추가해 주세요.</p>`;
+                return;
+            }
+
+            if (targetStudents.length === 0) {
+                grid.innerHTML = `<p class="col-span-full text-center py-8 text-sm text-slate-400 bg-slate-50 border border-dashed rounded-xl">"${searchTerm}" 이름의 학습자를 찾을 수 없습니다.</p>`;
+                return;
+            }
+
+            if (sessionIdx === -1) {
+                grid.innerHTML = `<p class="col-span-full text-center py-8 text-sm text-amber-500 bg-amber-50 border border-dashed border-amber-200 rounded-xl">오늘은 이 강좌의 수업일이 아니라 출석 체크를 할 수 없습니다.</p>`;
+                return;
+            }
+
+            targetStudents.forEach(student => {
+                const isAttendedToday = student.attendance[sessionIdx] !== "";
+
+                let nameLabel = student.name;
+                if (!student.isCitizen) {
+                    nameLabel = `<span class="text-rose-500 font-semibold text-xs bg-rose-50 border border-rose-200 px-1 py-0.5 rounded mr-1 shadow-2xs">(확인)</span>${student.name}`;
+                }
+
+                const row = document.createElement('div');
+                row.className = "bg-white border border-slate-200 rounded-xl p-3 flex items-center gap-3 hover:shadow-sm transition-all" + (isAttendedToday ? " bg-emerald-50/40 border-emerald-200" : "");
+
+                const checkbox = document.createElement('input');
+                checkbox.type = "checkbox";
+                checkbox.className = "check-box shrink-0";
+                checkbox.checked = isAttendedToday;
+                checkbox.onchange = () => toggleAttendance(student.id, sessionIdx, student.name, checkbox);
+
+                const label = document.createElement('div');
+                label.className = "flex-1 flex flex-wrap items-center gap-1 font-bold text-md " + (isAttendedToday ? "text-emerald-700" : "text-slate-700");
+                label.innerHTML = nameLabel;
+
+                const statusTag = document.createElement('span');
+                statusTag.className = "text-xs font-semibold shrink-0 " + (isAttendedToday ? "text-emerald-500" : "text-slate-300");
+                statusTag.innerText = isAttendedToday ? "✓ 출석완료" : "미출석";
+
+                const infoBtn = document.createElement('button');
+                infoBtn.className = "text-xs text-slate-400 hover:text-emerald-500 font-semibold shrink-0 underline underline-offset-2";
+                infoBtn.innerText = "현황";
+                infoBtn.onclick = (e) => { e.stopPropagation(); openModal(student.id); };
+
+                row.appendChild(checkbox);
+                row.appendChild(label);
+                row.appendChild(statusTag);
+                row.appendChild(infoBtn);
+                grid.appendChild(row);
+            });
+        }
+
+        function toggleAttendance(studentId, sessionIdx, sName, checkboxEl) {
+            const student = systemData.students.find(s => s.id === studentId);
+            if (!student) return;
+
+            if (checkboxEl.checked) {
+                const now = new Date();
+                student.attendance[sessionIdx] = `${formatDate(now)} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+                saveToStorage(`${sName} - ${sessionIdx + 1}회차 출석 체크 (본인)`, sName);
+                renderStudentList();
+            } else {
+                if (confirm(`[${sName}]님의 출석을 취소하시겠습니까?`)) {
+                    student.attendance[sessionIdx] = "";
+                    saveToStorage(`${sName} - ${sessionIdx + 1}회차 출석 취소 (본인)`, sName);
+                    renderStudentList();
+                } else {
+                    checkboxEl.checked = true;
+                }
+            }
+        }
+
+        // ===================== 관리자 페이지: 강좌 관리 =====================
+
+        function addCourse() {
+            if (blockIfReadOnlyAdmin()) return;
+            const name = document.getElementById('new-course-name').value.trim();
+            const total = parseInt(document.getElementById('new-course-total').value, 10);
+            const cutoff = parseInt(document.getElementById('new-course-cutoff').value, 10);
+            const startDate = document.getElementById('new-course-start').value;
+            const days = getCheckedDays('new-course-days');
+
+            if (!name) return alert("강좌명을 입력해 주세요.");
+            if (!total || total < 1) return alert("총 강의 회차를 올바르게 입력해 주세요.");
+            if (!cutoff || cutoff < 1 || cutoff > total) return alert("수료 기준 회차는 1 이상, 총 회차 이하로 입력해 주세요.");
+            if (!startDate) return alert("개강일을 선택해 주세요.");
+            if (days.length === 0) return alert("수업 요일을 1개 이상 선택해 주세요.");
+
+            systemData.courses.push({
+                id: "c" + Date.now(),
+                name: name,
+                totalSessions: total,
+                cutoffSessions: cutoff,
+                startDate: startDate,
+                days: days,
+                holidays: [...newCourseHolidays]
+            });
+
+            saveToStorage(`강좌 개설: ${name}`);
+            populateSelectOptions();
+            renderStudentList();
+            renderAdminTable();
+            syncAdminCourseSettings();
+
+            document.getElementById('new-course-name').value = '';
+            document.getElementById('new-course-total').value = 10;
+            document.getElementById('new-course-cutoff').value = 6;
+            document.getElementById('new-course-start').value = '';
+            setCheckedDays('new-course-days', []);
+            newCourseHolidays = [];
+            renderHolidayChips('new');
+            alert(`[${name}] 강좌가 등록되었습니다.`);
+        }
+
+        function syncAdminCourseSettings() {
+            const courseId = document.getElementById('admin-course-select').value;
+            const course = systemData.courses.find(c => c.id === courseId);
+            if (!course) return;
+
+            document.getElementById('edit-course-total').value = course.totalSessions;
+            document.getElementById('edit-course-cutoff').value = course.cutoffSessions;
+            document.getElementById('edit-course-start').value = course.startDate;
+            setCheckedDays('edit-course-days', course.days);
+            editCourseHolidays = [...(course.holidays || [])];
+            renderHolidayChips('edit');
+        }
+
+        function saveCourseSettings() {
+            if (blockIfReadOnlyAdmin()) return;
+            const courseId = document.getElementById('admin-course-select').value;
+            const course = systemData.courses.find(c => c.id === courseId);
+            if (!course) return alert("강좌를 먼저 선택해 주세요.");
+
+            const total = parseInt(document.getElementById('edit-course-total').value, 10);
+            const cutoff = parseInt(document.getElementById('edit-course-cutoff').value, 10);
+            const startDate = document.getElementById('edit-course-start').value;
+            const days = getCheckedDays('edit-course-days');
+
+            if (!total || total < 1) return alert("총 강의 회차를 올바르게 입력해 주세요.");
+            if (!cutoff || cutoff < 1 || cutoff > total) return alert("수료 기준 회차는 1 이상, 총 회차 이하로 입력해 주세요.");
+            if (!startDate) return alert("개강일을 선택해 주세요.");
+            if (days.length === 0) return alert("수업 요일을 1개 이상 선택해 주세요.");
+
+            const oldTotal = course.totalSessions;
+            course.totalSessions = total;
+            course.cutoffSessions = cutoff;
+            course.startDate = startDate;
+            course.days = days;
+            course.holidays = [...editCourseHolidays];
+
+            if (total !== oldTotal) {
+                systemData.students.filter(s => s.courseId === course.id).forEach(s => {
+                    if (total > s.attendance.length) {
+                        while (s.attendance.length < total) s.attendance.push("");
+                    } else {
+                        s.attendance = s.attendance.slice(0, total);
+                    }
+                });
+            }
+
+            saveToStorage(`강좌 일정 수정: ${course.name}`);
+            renderStudentList();
+            renderAdminTable();
+            alert(`[${course.name}] 강좌의 일정이 저장되었습니다.`);
+        }
+
+        function deleteCourse() {
+            if (blockIfReadOnlyAdmin()) return;
+            const courseId = document.getElementById('admin-course-select').value;
+            const course = systemData.courses.find(c => c.id === courseId);
+            if (!course) return alert("삭제할 강좌를 선택해 주세요.");
+
+            const studentCount = systemData.students.filter(s => s.courseId === courseId).length;
+            if (!confirm(`[${course.name}] 강좌를 삭제하시겠습니까?\n소속 수강생 ${studentCount}명의 출석 기록도 함께 삭제되며, 되돌릴 수 없습니다.`)) return;
+
+            systemData.courses = systemData.courses.filter(c => c.id !== courseId);
+            systemData.students = systemData.students.filter(s => s.courseId !== courseId);
+
+            saveToStorage(`강좌 삭제: ${course.name} (수강생 ${studentCount}명 포함)`);
+            populateSelectOptions();
+            renderStudentList();
+            renderAdminTable();
+            syncAdminCourseSettings();
+            alert("강좌가 삭제되었습니다.");
+        }
+
+        // ===================== 관리자 페이지: 수강생 등록 =====================
+
+        function downloadSampleExcel() {
+            const wsData = [
+                ["이름", "성별", "출생년도", "전화번호", "구민확인"],
+                ["김민준", "남", 1958, "010-1234-5678", "O"],
+                ["이서연", "여", 1962, "010-2345-6789", "O"],
+                ["박도윤", "남", 1955, "010-3456-7890", "X"],
+                ["최하은", "여", 1970, "010-4567-8901", "O"]
+            ];
+            const ws = XLSX.utils.aoa_to_sheet(wsData);
+            ws['!cols'] = [{ wch: 14 }, { wch: 8 }, { wch: 10 }, { wch: 16 }, { wch: 12 }];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "수강생명단");
+            XLSX.writeFile(wb, "수강생명단_양식.xlsx");
+        }
+
+        function downloadFullSampleExcel() {
+            const wsData = [
+                ["강좌명", "강의시작일", "요일", "학습자명", "구민확인", "성별", "출생연도", "전화번호"],
+                ["인공지능 실무 기본반", "2026-08-03", "월,수", "김민준", "O", "남", 1958, "010-1234-5678"],
+                ["인공지능 실무 기본반", "2026-08-03", "월,수", "이서연", "O", "여", 1962, "010-2345-6789"],
+                ["스마트폰 시니어 활용과정", "2026-08-04", "화,목", "박도윤", "X", "남", 1955, "010-3456-7890"],
+                ["스마트폰 시니어 활용과정", "2026-08-04", "화,목", "최하은", "O", "여", 1970, "010-4567-8901"]
+            ];
+            const ws = XLSX.utils.aoa_to_sheet(wsData);
+            ws['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 16 }];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "강좌+수강생일괄등록");
+            XLSX.writeFile(wb, "강좌_수강생_일괄등록_양식.xlsx");
+        }
+
+        const WEEKDAY_NAME_TO_INDEX = { "일": 0, "월": 1, "화": 2, "수": 3, "목": 4, "금": 5, "토": 6 };
+
+        function parseDaysText(raw) {
+            const text = String(raw || '').trim();
+            if (!text) return [];
+            return text.split(/[,\/\s]+/)
+                .map(part => part.replace(/요일$/, '').trim())
+                .map(part => WEEKDAY_NAME_TO_INDEX[part])
+                .filter(idx => idx !== undefined);
+        }
+
+        function parseExcelDateToStr(raw) {
+            if (!raw) return '';
+            if (raw instanceof Date) return formatDate(raw);
+            const text = String(raw).trim();
+            // "2026-08-03", "2026/08/03", "2026.08.03" 등을 허용
+            const m = text.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
+            if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+            return '';
+        }
+
+        function uploadFullExcel() {
+            if (blockIfReadOnlyAdmin()) return;
+            const fileInput = document.getElementById('full-excel-file-input');
+            if (!fileInput.files || fileInput.files.length === 0) return alert("업로드할 엑셀 파일을 선택해 주세요.");
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                const rows = XLSX.utils.sheet_to_json(worksheet);
+
+                let newCourseCount = 0;
+                let newStudentCount = 0;
+                let skippedRows = 0;
+
+                rows.forEach(row => {
+                    const courseName = String(row['강좌명'] || '').trim();
+                    const studentName = String(row['학습자명'] || row['이름'] || '').trim();
+                    if (!courseName || !studentName) { skippedRows++; return; }
+
+                    let course = systemData.courses.find(c => c.name === courseName);
+                    if (!course) {
+                        const startDate = parseExcelDateToStr(row['강의시작일']) || todayStr();
+                        const days = parseDaysText(row['요일']);
+                        course = {
+                            id: "c" + Date.now() + Math.floor(Math.random() * 1000),
+                            name: courseName,
+                            totalSessions: 10,
+                            cutoffSessions: 6,
+                            startDate: startDate,
+                            days: days.length > 0 ? days : [1, 3],
+                            holidays: []
+                        };
+                        systemData.courses.push(course);
+                        newCourseCount++;
+                    }
+
+                    const gender = normalizeGender(row['성별']);
+                    const birthYearRaw = row['출생연도'] || row['출생년도'] || row['출생년'] || '';
+                    const birthYear = parseInt(birthYearRaw, 10) || null;
+                    const phone = normalizePhone(row['전화번호'] || row['연락처'] || row['휴대폰번호'] || '');
+                    const citizenRaw = row['구민확인'] || row['구민여부'] || '';
+                    const isCitizen = ['O', 'o', 'Y', 'y', '예', 'true'].includes(String(citizenRaw).trim());
+
+                    systemData.students.push({
+                        id: "s" + (Date.now() + Math.random()),
+                        courseId: course.id,
+                        name: studentName,
+                        gender: gender,
+                        birthYear: birthYear,
+                        phone: phone,
+                        isCitizen: isCitizen,
+                        attendance: Array(course.totalSessions).fill("")
+                    });
+                    newStudentCount++;
+                });
+
+                if (newStudentCount > 0) {
+                    saveToStorage(`엑셀 일괄 등록 (신규 강좌 ${newCourseCount}개, 수강생 ${newStudentCount}명, 스킵 ${skippedRows}건)`);
+                    populateSelectOptions();
+                    renderStudentList();
+                    renderAdminTable();
+                    syncAdminCourseSettings();
+                    fileInput.value = '';
+                    let msg = `강좌 ${newCourseCount}개 생성/확인, 학습자 ${newStudentCount}명 등록 완료!`;
+                    if (skippedRows > 0) msg += `\n(강좌명 또는 학습자명이 비어 있는 ${skippedRows}개 행은 건너뛰었습니다.)`;
+                    alert(msg);
+                } else {
+                    alert("등록할 수 있는 유효한 행을 찾지 못했습니다. '강좌명'과 '학습자명' 열이 채워져 있는지 확인해 주세요.");
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function normalizeGender(raw) {
+            const v = String(raw || '').trim();
+            if (['남', '남성', 'M', 'm', 'male', 'Male'].includes(v)) return '남';
+            if (['여', '여성', 'F', 'f', 'female', 'Female'].includes(v)) return '여';
+            return '';
+        }
+
+        function normalizePhone(raw) {
+            // 숫자만 남긴 뒤, 자릿수에 맞춰 하이픈(-)을 자동으로 넣어줍니다.
+            const digits = String(raw == null ? '' : raw).replace(/[^0-9]/g, '');
+            if (!digits) return '';
+            if (digits.length === 11) return `${digits.slice(0,3)}-${digits.slice(3,7)}-${digits.slice(7)}`;
+            if (digits.length === 10) {
+                if (digits.startsWith('02')) return `${digits.slice(0,2)}-${digits.slice(2,6)}-${digits.slice(6)}`;
+                return `${digits.slice(0,3)}-${digits.slice(3,6)}-${digits.slice(6)}`;
+            }
+            if (digits.length === 9 && digits.startsWith('02')) return `${digits.slice(0,2)}-${digits.slice(2,5)}-${digits.slice(5)}`;
+            return digits;
+        }
+
+        function uploadExcel() {
+            if (blockIfReadOnlyAdmin()) return;
+            const courseId = document.getElementById('admin-student-course-select').value;
+            const fileInput = document.getElementById('excel-file-input');
+
+            if (!courseId) return alert("수강생을 등록할 대상 강좌를 선택하세요.");
+            if (!fileInput.files || fileInput.files.length === 0) return alert("업로드할 엑셀 파일을 선택해 주세요.");
+
+            const course = systemData.courses.find(c => c.id === courseId);
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+
+                const rows = XLSX.utils.sheet_to_json(worksheet);
+
+                let addCount = 0;
+                rows.forEach(row => {
+                    const name = row['이름'] || row['성명'];
+                    const citizenRaw = row['구민확인'] || row['구민여부'] || '';
+                    const gender = normalizeGender(row['성별']);
+                    const birthYearRaw = row['출생년도'] || row['출생연도'] || row['출생년'] || '';
+                    const birthYear = parseInt(birthYearRaw, 10) || null;
+                    const phone = normalizePhone(row['전화번호'] || row['연락처'] || row['휴대폰번호'] || '');
+
+                    if (name) {
+                        const isCitizen = ['O','o','Y','y','예','true'].includes(String(citizenRaw).trim());
+                        const attArr = Array(course.totalSessions).fill("");
+
+                        systemData.students.push({
+                            id: "s" + (Date.now() + Math.random()),
+                            courseId: courseId,
+                            name: String(name).trim(),
+                            gender: gender,
+                            birthYear: birthYear,
+                            phone: phone,
+                            isCitizen: isCitizen,
+                            attendance: attArr
+                        });
+                        addCount++;
+                    }
+                });
+
+                if (addCount > 0) {
+                    saveToStorage(`엑셀 명단 업로드: ${course.name} (${addCount}명)`);
+                    renderAdminTable();
+                    renderStudentList();
+                    fileInput.value = '';
+                    alert(`엑셀 파일로부터 총 ${addCount}명의 수강생을 일괄 등록했습니다!`);
+                } else {
+                    alert("엑셀 파일에서 유효한 수강생 이름을 찾지 못했습니다. '이름' 열이 있는지 확인해 주세요.");
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function addStudent() {
+            if (blockIfReadOnlyAdmin()) return;
+            const courseId = document.getElementById('admin-student-course-select').value;
+            const name = document.getElementById('new-student-name').value.trim();
+            const gender = document.getElementById('new-student-gender').value;
+            const birthYearInput = document.getElementById('new-student-birthyear').value;
+            const birthYear = birthYearInput ? parseInt(birthYearInput, 10) : null;
+            const phoneInput = document.getElementById('new-student-phone').value.trim();
+            const phone = normalizePhone(phoneInput);
+            const isCitizen = document.getElementById('new-student-citizen').checked;
+
+            if (!courseId) return alert("강좌를 먼저 선택해 주세요.");
+            if (!name) return alert("학습자 이름을 입력해 주세요.");
+            if (birthYearInput && (birthYear < 1900 || birthYear > new Date().getFullYear())) {
+                return alert("출생년도를 올바르게 입력해 주세요.");
+            }
+            if (phoneInput && phone.replace(/-/g, '').length < 8) {
+                return alert("전화번호를 올바르게 입력해 주세요.");
+            }
+
+            const course = systemData.courses.find(c => c.id === courseId);
+            const attArr = Array(course.totalSessions).fill("");
+
+            systemData.students.push({
+                id: "s" + (Date.now()),
+                courseId: courseId,
+                name: name,
+                gender: gender,
+                birthYear: birthYear,
+                phone: phone,
+                isCitizen: isCitizen,
+                attendance: attArr
+            });
+
+            saveToStorage(`수강생 등록: ${name} (${course.name})`);
+            renderAdminTable();
+            renderStudentList();
+            document.getElementById('new-student-name').value = '';
+            document.getElementById('new-student-gender').value = '';
+            document.getElementById('new-student-birthyear').value = '';
+            document.getElementById('new-student-phone').value = '';
+            document.getElementById('new-student-citizen').checked = false;
+            alert("수강생이 정상 추가되었습니다.");
+        }
+
+        function deleteStudent(studentId, sName) {
+            if (blockIfReadOnlyAdmin()) return;
+            if (!confirm(`[${sName}] 수강생을 명단에서 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
+            systemData.students = systemData.students.filter(s => s.id !== studentId);
+            saveToStorage(`수강생 삭제: ${sName}`);
+            renderAdminTable();
+            renderStudentList();
+        }
+
+        function toggleAllStudentCheckboxes() {
+            const checked = document.getElementById('admin-select-all-students').checked;
+            document.querySelectorAll('.admin-student-checkbox').forEach(cb => cb.checked = checked);
+        }
+
+        function syncStudentSelectAllState() {
+            const all = document.querySelectorAll('.admin-student-checkbox');
+            const checkedAll = document.querySelectorAll('.admin-student-checkbox:checked');
+            const selectAllEl = document.getElementById('admin-select-all-students');
+            if (selectAllEl) selectAllEl.checked = all.length > 0 && all.length === checkedAll.length;
+        }
+
+        function deleteSelectedStudents() {
+            if (blockIfReadOnlyAdmin()) return;
+            const ids = Array.from(document.querySelectorAll('.admin-student-checkbox:checked')).map(cb => cb.value);
+            if (ids.length === 0) return alert("삭제할 학습자를 먼저 체크해 주세요.");
+            if (!confirm(`선택한 ${ids.length}명의 수강생을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
+            systemData.students = systemData.students.filter(s => !ids.includes(s.id));
+            saveToStorage(`수강생 ${ids.length}명 일괄 삭제`);
+            renderAdminTable();
+            renderStudentList();
+        }
+
+        function toggleAdminAttendance(studentId, sessionIdx) {
+            if (blockIfReadOnlyAdmin()) return;
+            const student = systemData.students.find(s => s.id === studentId);
+            if (!student) return;
+
+            let actionText;
+            if (student.attendance[sessionIdx] !== "") {
+                if (!confirm(`${sessionIdx + 1}회차 출석 기록을 취소하시겠습니까?`)) return;
+                student.attendance[sessionIdx] = "";
+                actionText = `${student.name} - ${sessionIdx + 1}회차 출석 수기 취소`;
+            } else {
+                if (!confirm(`${sessionIdx + 1}회차를 수기로 출석 처리하시겠습니까?`)) return;
+                const now = new Date();
+                student.attendance[sessionIdx] = `${formatDate(now)} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')} (수기입력)`;
+                actionText = `${student.name} - ${sessionIdx + 1}회차 출석 수기 처리`;
+            }
+            saveToStorage(actionText);
+            renderAdminTable();
+            renderStudentList();
+        }
+
+        function toggleCitizenStatus(studentId) {
+            if (blockIfReadOnlyAdmin()) return;
+            const student = systemData.students.find(s => s.id === studentId);
+            if (!student) return;
+            student.isCitizen = !student.isCitizen;
+            saveToStorage(`${student.name} - 구민확인 상태 변경 → ${student.isCitizen ? '확인완료' : '미확인'}`);
+            renderAdminTable();
+            renderStudentList();
+        }
+
+        // ===================== 관리자 페이지: 강좌 검색/선택 =====================
+
+        function filterCourseDropdown() {
+            const term = document.getElementById('admin-course-search').value.trim();
+            const atFilter = document.getElementById('admin-table-filter');
+            const prev = atFilter.value;
+            atFilter.innerHTML = '';
+            getAdminFilterCourses().filter(c => c.name.includes(term)).forEach(c => atFilter.add(new Option(c.name, c.id)));
+            if (atFilter.querySelector(`option[value="${prev}"]`)) {
+                atFilter.value = prev;
+            }
+            renderAdminTable();
+        }
+
+        function renderCourseCheckboxList() {
+            const container = document.getElementById('course-checkbox-list');
+            if (!container) return;
+            container.innerHTML = systemData.courses.map(c => `
+                <label class="flex items-center gap-2 text-sm text-slate-700 py-1 course-checkbox-row" data-name="${c.name}">
+                    <input type="checkbox" class="course-download-checkbox w-4 h-4 accent-emerald-600" value="${c.id}" onchange="syncSelectAllState()">
+                    ${c.name}
+                </label>
+            `).join('');
+            filterCourseCheckboxList();
+        }
+
+        function filterCourseCheckboxList() {
+            const searchEl = document.getElementById('course-checkbox-search');
+            const term = (searchEl ? searchEl.value : '').trim();
+            document.querySelectorAll('#course-checkbox-list .course-checkbox-row').forEach(row => {
+                const match = !term || row.dataset.name.includes(term);
+                row.classList.toggle('hidden', !match);
+            });
+            syncSelectAllState();
+        }
+
+        function toggleAllCourseCheckboxes() {
+            const checked = document.getElementById('course-select-all').checked;
+            document.querySelectorAll('#course-checkbox-list .course-checkbox-row:not(.hidden) .course-download-checkbox').forEach(cb => cb.checked = checked);
+            syncSelectAllState();
+        }
+
+        function syncSelectAllState() {
+            const visibleBoxes = document.querySelectorAll('#course-checkbox-list .course-checkbox-row:not(.hidden) .course-download-checkbox');
+            const visibleChecked = document.querySelectorAll('#course-checkbox-list .course-checkbox-row:not(.hidden) .course-download-checkbox:checked');
+            const selectAllEl = document.getElementById('course-select-all');
+            if (selectAllEl) selectAllEl.checked = visibleBoxes.length > 0 && visibleBoxes.length === visibleChecked.length;
+
+            const allChecked = document.querySelectorAll('.course-download-checkbox:checked');
+            const all = document.querySelectorAll('.course-download-checkbox');
+            const summaryEl = document.getElementById('course-select-summary');
+            if (summaryEl) {
+                summaryEl.innerHTML = `📂 강좌 선택 <span class="text-emerald-600 font-bold">(${allChecked.length}개 선택됨 / 전체 ${all.length}개)</span>`;
+            }
+        }
+
+        // ===================== 관리자 페이지: 대시보드/분석 =====================
+
+        function renderAdminTable() {
+            const filterCourseId = document.getElementById('admin-table-filter').value;
+            const tbody = document.getElementById('admin-table-body');
+            tbody.innerHTML = '';
+            const selectAllHeaderEl = document.getElementById('admin-select-all-students');
+            if (selectAllHeaderEl) selectAllHeaderEl.checked = false;
+
+            if (!filterCourseId) {
+                document.getElementById('course-analysis').innerHTML = '';
+                if (isAdmin2()) {
+                    tbody.innerHTML = `<tr><td colspan="10" class="text-center p-8 text-slate-400">아직 확인할 수 있도록 지정된 강좌가 없습니다. 슈퍼관리자에게 문의해 주세요.</td></tr>`;
+                }
+                return;
+            }
+            // 관리자2가 담당하지 않는 강좌에 접근하는 것을 차단 (URL 조작 등 방어)
+            if (isAdmin2() && !getAdminFilterCourses().some(c => c.id === filterCourseId)) {
+                document.getElementById('course-analysis').innerHTML = '';
+                tbody.innerHTML = `<tr><td colspan="10" class="text-center p-8 text-slate-400">이 강좌를 확인할 권한이 없습니다.</td></tr>`;
+                return;
+            }
+            const course = systemData.courses.find(c => c.id === filterCourseId);
+            if (!course) return;
+
+            const readOnly = isAdmin2();
+            const sessionDates = computeSessionDates(course);
+            const today = todayStr();
+            const searchTerm = (document.getElementById('admin-student-search').value || '').trim();
+            const allStudentsInCourse = sortByNameKo(systemData.students.filter(s => s.courseId === filterCourseId));
+            const filteredStudents = searchTerm
+                ? allStudentsInCourse.filter(s => s.name.includes(searchTerm))
+                : allStudentsInCourse;
+
+            if (readOnly) {
+                document.getElementById('course-analysis').innerHTML = '';
+            } else {
+                renderCourseAnalysis(course, allStudentsInCourse);
+            }
+
+            if (filteredStudents.length === 0) {
+                const msg = searchTerm ? `"${searchTerm}" 이름의 수강생을 찾을 수 없습니다.` : "등록된 수강생이 없습니다.";
+                tbody.innerHTML = `<tr><td colspan="10" class="text-center p-8 text-slate-400">${msg}</td></tr>`;
+                return;
+            }
+
+            filteredStudents.forEach(student => {
+                const attCount = student.attendance.filter(a => a !== "").length;
+                const isPassed = (attCount >= course.cutoffSessions) && student.isCitizen;
+
+                let adminDisplayName = student.name;
+                if (!student.isCitizen) {
+                    adminDisplayName = `<span class="text-rose-500 font-semibold text-xs bg-rose-50 border border-rose-200 px-1 py-0.5 rounded mr-1 shadow-2xs">(확인)</span>${student.name}`;
+                }
+
+                const citizenBadge = readOnly
+                    ? (student.isCitizen
+                        ? `<span class="text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full text-xs font-bold">확인완료</span>`
+                        : `<span class="text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full text-xs font-bold">미확인</span>`)
+                    : (student.isCitizen
+                        ? `<button type="button" onclick="toggleCitizenStatus('${student.id}')" title="클릭하면 '미확인'으로 전환됩니다" class="text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full text-xs font-bold hover:bg-emerald-100 cursor-pointer">확인완료</button>`
+                        : `<button type="button" onclick="toggleCitizenStatus('${student.id}')" title="클릭하면 '확인완료'로 전환됩니다" class="text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full text-xs font-bold hover:bg-rose-100 cursor-pointer">미확인</button>`);
+
+                const sessionDots = student.attendance.map((val, idx) => {
+                    const attended = val !== "";
+                    const dateLabel = sessionDates[idx] ? sessionDates[idx].slice(5) : '';
+                    const isToday = sessionDates[idx] === today;
+                    if (readOnly) {
+                        const dotTitle = `${idx+1}회차 (${sessionDates[idx] || '미정'})${attended ? ' - ' + val : ' - 미출석'}`;
+                        return `<span title="${dotTitle}" class="inline-flex flex-col items-center justify-center w-9 h-9 rounded-md text-[9px] font-bold mr-0.5 mb-0.5 leading-none ${attended ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400'} ${isToday ? 'ring-2 ring-offset-1 ring-emerald-300' : ''}"><span>${idx+1}회</span><span>${dateLabel}</span></span>`;
+                    }
+                    const dotTitle = `${idx+1}회차 (${sessionDates[idx] || '미정'})${attended ? ' - ' + val + ' · 클릭시 출석 취소' : ' - 미출석 · 클릭시 수기 출석처리'}`;
+                    return `<button type="button" onclick="toggleAdminAttendance('${student.id}', ${idx})" title="${dotTitle}" class="inline-flex flex-col items-center justify-center w-9 h-9 rounded-md text-[9px] font-bold mr-0.5 mb-0.5 leading-none cursor-pointer hover:opacity-80 ${attended ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400'} ${isToday ? 'ring-2 ring-offset-1 ring-emerald-300' : ''}"><span>${idx+1}회</span><span>${dateLabel}</span></button>`;
+                }).join('');
+
+                const passBadge = isPassed
+                    ? `<span class="text-emerald-700 bg-emerald-100 px-2 py-1 rounded-lg text-xs font-bold">수료</span>`
+                    : `<span class="text-slate-500 bg-slate-100 px-2 py-1 rounded-lg text-xs font-bold">미수료</span>`;
+
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50/60 transition-all";
+                tr.innerHTML = `
+                    <td class="p-3">${readOnly ? '' : `<input type="checkbox" class="admin-student-checkbox w-4 h-4 accent-emerald-600" value="${student.id}" onchange="syncStudentSelectAllState()">`}</td>
+                    <td class="p-3 font-bold text-slate-800">${adminDisplayName}</td>
+                    <td class="p-3 text-slate-500">${student.gender || '-'}</td>
+                    <td class="p-3 text-slate-500">${student.birthYear || '-'}</td>
+                    <td class="p-3 text-slate-500 whitespace-nowrap">${student.phone ? `<a href="tel:${student.phone}" class="hover:text-emerald-600 hover:underline">${student.phone}</a>` : '-'}</td>
+                    <td class="p-3">${citizenBadge}</td>
+                    <td class="p-3 flex flex-wrap max-w-sm">${sessionDots}</td>
+                    <td class="p-3 text-center font-bold text-emerald-600">${attCount} / ${course.totalSessions}</td>
+                    <td class="p-3 text-center">${passBadge}</td>
+                    <td class="p-3 text-center">${readOnly ? '' : `<button class="text-slate-300 hover:text-rose-500 font-bold text-sm" title="삭제">🗑️</button>`}</td>
+                `;
+                if (!readOnly) tr.querySelector('button[title="삭제"]').onclick = () => deleteStudent(student.id, student.name);
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderCourseAnalysis(course, students) {
+            const container = document.getElementById('course-analysis');
+            if (!container) return;
+            const total = students.length;
+
+            if (total === 0) {
+                container.innerHTML = `<p class="text-sm text-slate-400 text-center py-4">분석할 수강생이 없습니다.</p>`;
+                return;
+            }
+
+            const maleCount = students.filter(s => s.gender === '남').length;
+            const femaleCount = students.filter(s => s.gender === '여').length;
+            const unknownGenderCount = total - maleCount - femaleCount;
+
+            const currentYear = new Date().getFullYear();
+            const ageBuckets = { "50대 이하": 0, "60대": 0, "70대": 0, "80대 이상": 0, "미상": 0 };
+            students.forEach(s => {
+                if (!s.birthYear) { ageBuckets["미상"]++; return; }
+                const age = currentYear - s.birthYear + 1;
+                if (age < 60) ageBuckets["50대 이하"]++;
+                else if (age < 70) ageBuckets["60대"]++;
+                else if (age < 80) ageBuckets["70대"]++;
+                else ageBuckets["80대 이상"]++;
+            });
+
+            const passedCount = students.filter(s => {
+                const attCount = s.attendance.filter(a => a !== "").length;
+                return (attCount >= course.cutoffSessions) && s.isCitizen;
+            }).length;
+            const passRate = total > 0 ? Math.round((passedCount / total) * 1000) / 10 : 0;
+
+            const barRow = (label, count, colorClass, widthLabel) => {
+                const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                return `<div class="flex items-center gap-2 text-xs">
+                    <span class="${widthLabel} text-slate-500 font-semibold shrink-0">${label}</span>
+                    <div class="flex-1 bg-slate-200 rounded-full h-3 overflow-hidden"><div class="${colorClass} h-3" style="width:${pct}%"></div></div>
+                    <span class="w-16 text-right text-slate-500 shrink-0">${count}명 (${pct}%)</span>
+                </div>`;
+            };
+
+            const genderHtml = [
+                barRow('남', maleCount, 'bg-sky-500', 'w-8'),
+                barRow('여', femaleCount, 'bg-pink-500', 'w-8'),
+                unknownGenderCount > 0 ? barRow('미상', unknownGenderCount, 'bg-slate-400', 'w-8') : ''
+            ].join('');
+
+            const ageHtml = Object.entries(ageBuckets)
+                .filter(([, c]) => c > 0)
+                .map(([label, count]) => barRow(label, count, 'bg-emerald-500', 'w-16'))
+                .join('');
+
+            container.innerHTML = `
+                <p class="text-xs font-bold text-slate-500 mb-3">📈 [${course.name}] 강좌 분석 (총 ${total}명)</p>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="space-y-2">
+                        <p class="text-[11px] font-bold text-slate-400">성별 분포</p>
+                        ${genderHtml}
+                    </div>
+                    <div class="space-y-2">
+                        <p class="text-[11px] font-bold text-slate-400">연령대 분포</p>
+                        ${ageHtml}
+                    </div>
+                    <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex flex-col items-center justify-center">
+                        <p class="text-xs font-bold text-emerald-600">수료율</p>
+                        <p class="text-3xl font-extrabold text-emerald-700 mt-1">${passRate}%</p>
+                        <p class="text-xs text-emerald-500 mt-1">${passedCount} / ${total}명 수료</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ===================== 관리자 페이지: 다운로드 =====================
+
+        function buildRosterCsv(courseIds) {
+            let csv = "\uFEFF강좌명,이름,성별,출생년도,전화번호,구민확인,출석일수,총회차,수료여부\n";
+            courseIds.forEach(cid => {
+                const course = systemData.courses.find(c => c.id === cid);
+                if (!course) return;
+                const students = systemData.students.filter(s => s.courseId === cid);
+                students.forEach(s => {
+                    const attCount = s.attendance.filter(a => a !== "").length;
+                    const passed = (attCount >= course.cutoffSessions) && s.isCitizen;
+                    csv += `${course.name},${s.name},${s.gender || ''},${s.birthYear || ''},${s.phone || ''},${s.isCitizen ? '확인' : '미확인'},${attCount},${course.totalSessions},${passed ? '수료' : '미수료'}\n`;
+                });
+            });
+            return csv;
+        }
+
+        function triggerCsvDownload(csv, filename) {
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function downloadCourseRoster() {
+            if (blockIfReadOnlyAdmin()) return;
+            const filterCourseId = document.getElementById('admin-table-filter').value;
+            const course = systemData.courses.find(c => c.id === filterCourseId);
+            if (!course) return alert("먼저 명단을 확인할 강좌를 선택해 주세요.");
+            const csv = buildRosterCsv([filterCourseId]);
+            triggerCsvDownload(csv, `${course.name}_전체명단.csv`);
+        }
+
+        function downloadSelectedCourses() {
+            if (blockIfReadOnlyAdmin()) return;
+            const checked = Array.from(document.querySelectorAll('.course-download-checkbox:checked')).map(cb => cb.value);
+            if (checked.length === 0) return alert("다운로드할 강좌를 1개 이상 선택해 주세요.");
+            const csv = buildRosterCsv(checked);
+            triggerCsvDownload(csv, `선택강좌_전체명단_${todayStr()}.csv`);
+        }
+
+        // 분기 마감: 전체 강좌·수강생 명단을 CSV로 백업 다운로드한 뒤,
+        // 확인 절차(문구 입력)를 거쳐 모든 강좌/수강생 데이터를 초기화합니다.
+        // 관리자 계정(adminAccounts)은 삭제하지 않습니다.
+        function quarterCloseReset() {
+            if (blockIfReadOnlyAdmin()) return;
+            if (blockIfNotSuperAdmin()) return;
+
+            if (!systemData.courses || systemData.courses.length === 0) {
+                return alert("삭제할 강좌 데이터가 없습니다.");
+            }
+
+            const courseCount = systemData.courses.length;
+            const studentCount = systemData.students.length;
+
+            // 1) 전체 강좌 명단 백업 다운로드 (미수료자 포함 전체)
+            const allCourseIds = systemData.courses.map(c => c.id);
+            const csv = buildRosterCsv(allCourseIds);
+            triggerCsvDownload(csv, `전체강좌_분기마감_백업_${todayStr()}.csv`);
+
+            // 2) 1차 확인: 다운로드 파일을 확인했는지
+            const step1 = confirm(
+                `📥 전체 강좌(${courseCount}개) · 수강생(${studentCount}명) 명단이 CSV 파일로 다운로드되었습니다.\n\n` +
+                `다운로드 폴더에서 파일이 정상적으로 저장된 것을 확인해 주세요.\n\n` +
+                `파일을 확인하셨고 다음 단계(전체 삭제)로 진행하시겠습니까?`
+            );
+            if (!step1) {
+                alert("초기화가 취소되었습니다. 데이터는 삭제되지 않았습니다.");
+                return;
+            }
+
+            // 3) 2차 확인: 문구를 직접 입력해야 진행 (되돌릴 수 없는 작업이므로)
+            const typed = prompt(
+                `⚠️ 마지막 확인입니다.\n\n` +
+                `이 작업은 되돌릴 수 없으며, 모든 강좌(${courseCount}개)와 수강생(${studentCount}명)의 출석 기록이 영구 삭제됩니다.\n` +
+                `(관리자 계정 정보는 삭제되지 않습니다.)\n\n` +
+                `계속하려면 아래에 정확히 "전체삭제"를 입력해 주세요.`
+            );
+            if (typed !== "전체삭제") {
+                alert("입력하신 문구가 일치하지 않아 취소되었습니다. 데이터는 삭제되지 않았습니다.");
+                return;
+            }
+
+            // 4) 초기화 실행
+            systemData.courses = [];
+            systemData.students = [];
+            qrForcedCourseId = null;
+
+            saveToStorage(`분기 마감 초기화 (강좌 ${courseCount}개 · 수강생 ${studentCount}명 삭제, 다운로드 백업 완료 후 진행)`);
+
+            populateSelectOptions();
+            renderStudentList();
+            renderAdminTable();
+            syncAdminCourseSettings();
+            const summaryEl = document.getElementById('course-select-summary');
+            if (summaryEl) summaryEl.innerHTML = `📂 강좌 선택 <span class="text-emerald-600 font-bold">(0개 선택됨)</span>`;
+
+            alert("✅ 초기화가 완료되었습니다. 다음 분기 강좌를 새로 등록해 주세요.");
+        }
+
+        // ===================== 상세 현황 모달 =====================
+
+        function openModal(studentId) {
+            const student = systemData.students.find(s => s.id === studentId);
+            if (!student) return;
+            const course = systemData.courses.find(c => c.id === student.courseId);
+            if (!course) return;
+
+            const sessionDates = computeSessionDates(course);
+            const attCount = student.attendance.filter(a => a !== "").length;
+            const isPassed = (attCount >= course.cutoffSessions) && student.isCitizen;
+
+            document.getElementById('modal-student-name').innerText = student.name;
+            document.getElementById('modal-course-name').innerText = course.name;
+            const profileParts = [];
+            if (student.gender) profileParts.push(student.gender);
+            if (student.birthYear) profileParts.push(`${student.birthYear}년생`);
+            if (student.phone) profileParts.push(student.phone);
+            document.getElementById('modal-profile-line').innerText = profileParts.join(' · ');
+            document.getElementById('modal-attendance-count').innerText = `${attCount} / ${course.totalSessions}회`;
+
+            const citizenStatusEl = document.getElementById('modal-citizen-status');
+            citizenStatusEl.innerText = student.isCitizen ? "확인완료" : "미확인";
+            citizenStatusEl.className = "text-lg font-bold mt-0.5 " + (student.isCitizen ? "text-emerald-600" : "text-rose-500");
+
+            const finalBox = document.getElementById('modal-final-box');
+            if (isPassed) {
+                finalBox.className = "p-4 rounded-xl text-center font-bold text-sm bg-emerald-50 text-emerald-700 border border-emerald-200";
+                finalBox.innerText = "🎉 수료 기준을 충족했습니다!";
+            } else if (!student.isCitizen) {
+                finalBox.className = "p-4 rounded-xl text-center font-bold text-sm bg-rose-50 text-rose-600 border border-rose-200";
+                finalBox.innerText = "⚠️ 구민 확인이 완료되지 않아 수료 처리가 불가합니다.";
+            } else {
+                finalBox.className = "p-4 rounded-xl text-center font-bold text-sm bg-slate-50 text-slate-500 border border-slate-200";
+                finalBox.innerText = `앞으로 ${Math.max(course.cutoffSessions - attCount, 0)}회 더 출석하면 수료 기준을 충족합니다.`;
+            }
+
+            const sessionList = document.getElementById('modal-session-list');
+            sessionList.innerHTML = student.attendance.map((val, idx) => {
+                const attended = val !== "";
+                const dateLabel = sessionDates[idx] || '날짜 미정';
+                return `<div class="flex justify-between items-center px-2 py-1.5 rounded-md ${attended ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-400'}">
+                    <span class="font-semibold">${idx+1}회차 (${dateLabel})</span>
+                    <span>${attended ? val : '미출석'}</span>
+                </div>`;
+            }).join('');
+
+            document.getElementById('status-modal').classList.remove('hidden');
+        }
+
+        function getShareBaseUrl() {
+            // 해시(#)나 쿼리스트링(?) 없이 순수 페이지 주소만 사용
+            return window.location.origin + window.location.pathname;
+        }
+
+        function isLikelyUnshareableHost() {
+            // 로컬 파일(file://)이나 localhost로 열었을 때는 학습자 기기에서 QR이 동작하지 않음
+            return window.location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(window.location.hostname);
+        }
+
+        function openQrModal() {
+            if (blockIfReadOnlyAdmin()) return;
+            const select = document.getElementById('qr-course-select');
+            const prev = select.value;
+            select.innerHTML = '<option value="">전체 강좌 선택 화면 (특정 강좌 지정 안 함)</option>';
+            systemData.courses.forEach(c => select.add(new Option(c.name, c.id)));
+
+            const filterCourseId = document.getElementById('admin-table-filter').value;
+            if (filterCourseId && systemData.courses.some(c => c.id === filterCourseId)) {
+                select.value = filterCourseId;
+            } else if (systemData.courses.some(c => c.id === prev)) {
+                select.value = prev;
+            }
+
+            const warningEl = document.getElementById('qr-hosting-warning');
+            if (isLikelyUnshareableHost()) {
+                warningEl.classList.remove('hidden');
+                warningEl.innerText = "⚠️ 지금 이 화면은 인터넷에 공개된 주소가 아닌 것 같아요 (내 컴퓨터에서만 여는 파일 또는 localhost). 이 QR은 다른 사람 휴대폰에서 열리지 않습니다. GitHub Pages/Netlify 등으로 먼저 온라인에 올린 뒤, 그 주소에서 QR을 다시 만들어 주세요.";
+            } else {
+                warningEl.classList.add('hidden');
+            }
+
+            renderQrCode();
+            document.getElementById('qr-modal').classList.remove('hidden');
+        }
+
+        function closeQrModal() {
+            document.getElementById('qr-modal').classList.add('hidden');
+        }
+
+        function renderQrCode() {
+            const courseId = document.getElementById('qr-course-select').value;
+            const url = courseId ? `${getShareBaseUrl()}?course=${encodeURIComponent(courseId)}` : getShareBaseUrl();
+            document.getElementById('qr-url-text').value = url;
+
+            const qrImgSrc = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=8&data=${encodeURIComponent(url)}`;
+            document.getElementById('qr-code-image').src = qrImgSrc;
+            document.getElementById('qr-download-link').href = qrImgSrc;
+
+            const course = systemData.courses.find(c => c.id === courseId);
+            document.getElementById('qr-download-link').download = course ? `${course.name}_출석QR.png` : "출석QR_전체선택.png";
+        }
+
+        function copyQrUrl() {
+            const input = document.getElementById('qr-url-text');
+            input.select();
+            input.setSelectionRange(0, 99999);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(input.value).then(() => alert("주소를 복사했습니다.")).catch(() => document.execCommand('copy'));
+            } else {
+                document.execCommand('copy');
+                alert("주소를 복사했습니다.");
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('status-modal').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
